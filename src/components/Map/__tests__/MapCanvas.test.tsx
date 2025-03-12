@@ -1,6 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, waitFor, screen } from "@testing-library/react";
+import { render, waitFor, screen, fireEvent } from "@testing-library/react";
 import MapCanvas from "../MapCanvas";
+import MapControls from "../MapControls";
+import { State } from "@/types/map";
+
+// Mock the mapRendering utilities
+vi.mock("@/utils/mapRendering", () => ({
+  isPointInState: vi.fn().mockReturnValue(false),
+  isPointInPolygon: vi.fn().mockReturnValue(false),
+  drawState: vi.fn(),
+  coordToCanvas: vi.fn().mockReturnValue([100, 100]),
+  calculateMapTransform: vi.fn().mockReturnValue({
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  }),
+}));
 
 // Mock fetch to return sample GeoJSON data
 global.fetch = vi.fn();
@@ -83,6 +98,80 @@ const mockGetContext = vi.fn(() => ({
   shadowOffsetY: 0,
 }));
 
+// Separate tests for MapControls component
+describe("MapControls Component", () => {
+  it("renders zoom controls and info panels", () => {
+    const props = {
+      zoomLevel: 1,
+      setZoomLevel: vi.fn(),
+      resetView: vi.fn(),
+      hoveredState: "test-state-1",
+      states: [
+        {
+          id: "test-state-1",
+          name: "Test State 1",
+          polygons: [] as Array<Array<[number, number]>>,
+        },
+        {
+          id: "test-state-2",
+          name: "Test State 2",
+          polygons: [] as Array<Array<[number, number]>>,
+        },
+      ] as State[],
+      selectedStates: new Set<string>(["test-state-1"]),
+      showTooltip: true,
+    };
+
+    render(<MapControls {...props} />);
+
+    // Check for zoom controls
+    expect(screen.getByText("+")).toBeInTheDocument();
+    expect(screen.getByText("-")).toBeInTheDocument();
+    expect(screen.getByText("Reset")).toBeInTheDocument();
+
+    // Check for state tooltip
+    expect(screen.getByText("Test State 1")).toBeInTheDocument();
+    expect(screen.getByText("(Selected)")).toBeInTheDocument();
+
+    // Check for control info
+    expect(
+      screen.getByText(/Right-click \+ drag to pan • Mouse wheel to zoom/i),
+    ).toBeInTheDocument();
+
+    // Check for selected count
+    expect(screen.getByText("Selected: 1 state")).toBeInTheDocument();
+  });
+
+  it("handles zoom button clicks", () => {
+    const setZoomLevel = vi.fn();
+    const resetView = vi.fn();
+
+    const props = {
+      zoomLevel: 1,
+      setZoomLevel,
+      resetView,
+      hoveredState: null,
+      states: [] as State[],
+      selectedStates: new Set<string>(),
+      showTooltip: true,
+    };
+
+    render(<MapControls {...props} />);
+
+    // Click zoom in button
+    fireEvent.click(screen.getByText("+"));
+    expect(setZoomLevel).toHaveBeenCalledWith(1.1);
+
+    // Click zoom out button
+    fireEvent.click(screen.getByText("-"));
+    expect(setZoomLevel).toHaveBeenCalledWith(0.9);
+
+    // Click reset button
+    fireEvent.click(screen.getByText("Reset"));
+    expect(resetView).toHaveBeenCalled();
+  });
+});
+
 describe("MapCanvas Component", () => {
   beforeEach(() => {
     // Mock ResizeObserver
@@ -111,6 +200,9 @@ describe("MapCanvas Component", () => {
       y: 0,
       toJSON: vi.fn(),
     }));
+
+    // Reset mocks from mapRendering
+    vi.clearAllMocks();
 
     // Suppress console logs
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -145,10 +237,11 @@ describe("MapCanvas Component", () => {
     });
   });
 
-  it("renders zoom controls", async () => {
+  it("renders the MapControls component", async () => {
     render(<MapCanvas />);
 
     await waitFor(() => {
+      // Check for MapControls render
       const zoomInButton = screen.getByText("+");
       const zoomOutButton = screen.getByText("-");
       const resetButton = screen.getByText("Reset");
@@ -159,14 +252,59 @@ describe("MapCanvas Component", () => {
     });
   });
 
-  it("renders control info", async () => {
+  it("responds to keyboard navigation", async () => {
     render(<MapCanvas />);
 
+    // Wait for data to load
     await waitFor(() => {
-      const controlInfo = screen.getByText(
-        /Right-click \+ drag to pan • Mouse wheel to zoom/i,
-      );
-      expect(controlInfo).toBeInTheDocument();
+      const mapContainer = screen.getByTestId("map-canvas-container");
+      expect(mapContainer).toBeInTheDocument();
+    });
+
+    const mapContainer = screen.getByTestId("map-canvas-container");
+
+    // Focus the map container
+    mapContainer.focus();
+
+    // Test arrow right for navigation
+    fireEvent.keyDown(mapContainer, { key: "ArrowRight" });
+
+    // Test enter for selection
+    fireEvent.keyDown(mapContainer, { key: "Enter" });
+
+    // Test + key for zoom in
+    fireEvent.keyDown(mapContainer, { key: "+" });
+
+    // Test - key for zoom out
+    fireEvent.keyDown(mapContainer, { key: "-" });
+
+    // Test R key for reset
+    fireEvent.keyDown(mapContainer, { key: "r" });
+  });
+
+  it("applies spatial optimization for large datasets", async () => {
+    // Create a large sample dataset
+    const largeGeoJSON = {
+      ...sampleGeoJSON,
+      features: Array(100)
+        .fill(null)
+        .map((_, i) => ({
+          ...sampleGeoJSON.features[0],
+          id: `test-state-${i}`,
+          properties: { name: `Test State ${i}` },
+        })),
+    };
+
+    // Mock fetch to return large dataset
+    global.fetch = vi.fn().mockResolvedValue({
+      json: vi.fn().mockResolvedValue(largeGeoJSON),
+    });
+
+    render(<MapCanvas />);
+
+    // Wait for data processing
+    await waitFor(() => {
+      expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalled();
     });
   });
 

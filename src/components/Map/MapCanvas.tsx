@@ -11,14 +11,28 @@
  * - Responsive design that scales with its container
  * - Touch support for mobile devices
  * - Zoom and pan functionality similar to territorial.io
+ * - Keyboard navigation for accessibility
  *
  * @component
  * @example
  * <MapCanvas width={800} height={600} />
  */
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import MapControls from "./MapControls";
+import {
+  CanvasSize,
+  GeoJSONFeature,
+  MapBounds,
+  PanPosition,
+  Point,
+  State,
+} from "@/types/map";
+import {
+  calculateMapTransform,
+  drawState,
+  isPointInState,
+} from "@/utils/mapRendering";
 
 interface MapCanvasProps {
   /** Width of the canvas in pixels (default: 800) */
@@ -27,57 +41,95 @@ interface MapCanvasProps {
   height?: number;
 }
 
-// Improving type definitions for GeoJSON
-// More specific types for coordinate structures
-type Coordinate = [number, number];
-type Ring = Coordinate[];
-type Polygon = Ring[];
-type MultiPolygon = Polygon[];
-
-// GeoJSON type interfaces with improved typing
-interface GeoJSONFeature {
-  id?: string;
-  properties: {
-    name: string;
-    [key: string]: unknown;
-  };
-  geometry: {
-    type: string;
-    coordinates: Ring | Polygon | MultiPolygon; // More specific union type instead of any[]
-  };
-}
-
-// Simple representation of a state with essential data for rendering
-interface State {
-  id: string;
-  name: string;
-  // Store coordinates directly as simplified polygons
-  polygons: Array<Array<[number, number]>>;
+// Define a spatial index grid
+interface SpatialGridCell {
+  stateIndices: number[];
 }
 
 export default function MapCanvas({
   width = 800,
   height = 600,
 }: MapCanvasProps) {
+  // References
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Map data state
   const [states, setStates] = useState<State[]>([]);
   const [hoveredState, setHoveredState] = useState<string | null>(null);
   const [selectedStates, setSelectedStates] = useState<Set<string>>(new Set());
-  const [mapBounds, setMapBounds] = useState<{
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-  } | null>(null);
-  const [canvasSize, setCanvasSize] = useState({ width, height });
+  const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
+  const [canvasSize, setCanvasSize] = useState<CanvasSize>({ width, height });
 
-  // Zoom and pan functionality
+  // Zoom and pan state
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [pan, setPan] = useState<PanPosition>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
   const [showTooltip] = useState(true);
+  const [focusedStateIndex, setFocusedStateIndex] = useState<number>(-1);
+
+  // Create a spatial index for faster hit testing and rendering
+  const spatialIndex = useMemo(() => {
+    if (!states.length || !mapBounds) return null;
+
+    const GRID_SIZE = 20; // 20x20 grid for spatial indexing
+    const grid: SpatialGridCell[][] = Array(GRID_SIZE)
+      .fill(null)
+      .map(() =>
+        Array(GRID_SIZE)
+          .fill(null)
+          .map(() => ({ stateIndices: [] })),
+      );
+
+    const mapWidth = mapBounds.maxX - mapBounds.minX;
+    const mapHeight = mapBounds.maxY - mapBounds.minY;
+
+    // Place each state in the appropriate grid cells
+    states.forEach((state, stateIndex) => {
+      // Find the min/max bounds for this state
+      let stateMinX = Infinity;
+      let stateMaxX = -Infinity;
+      let stateMinY = Infinity;
+      let stateMaxY = -Infinity;
+
+      state.polygons.forEach((polygon) => {
+        polygon.forEach(([lng, lat]) => {
+          stateMinX = Math.min(stateMinX, lng);
+          stateMaxX = Math.max(stateMaxX, lng);
+          stateMinY = Math.min(stateMinY, lat);
+          stateMaxY = Math.max(stateMaxY, lat);
+        });
+      });
+
+      // Convert state bounds to grid cells
+      const minGridX = Math.max(
+        0,
+        Math.floor((GRID_SIZE * (stateMinX - mapBounds.minX)) / mapWidth),
+      );
+      const maxGridX = Math.min(
+        GRID_SIZE - 1,
+        Math.floor((GRID_SIZE * (stateMaxX - mapBounds.minX)) / mapWidth),
+      );
+      const minGridY = Math.max(
+        0,
+        Math.floor((GRID_SIZE * (stateMinY - mapBounds.minY)) / mapHeight),
+      );
+      const maxGridY = Math.min(
+        GRID_SIZE - 1,
+        Math.floor((GRID_SIZE * (stateMaxY - mapBounds.minY)) / mapHeight),
+      );
+
+      // Add state index to all grid cells it intersects
+      for (let y = minGridY; y <= maxGridY; y++) {
+        for (let x = minGridX; x <= maxGridX; x++) {
+          grid[y][x].stateIndices.push(stateIndex);
+        }
+      }
+    });
+
+    return { grid, GRID_SIZE };
+  }, [states, mapBounds]);
 
   // Handle container resizing for responsive layout
   useEffect(() => {
@@ -136,51 +188,49 @@ export default function MapCanvas({
           maxY = -Infinity;
 
         const processedStates = data.features.map((feature: GeoJSONFeature) => {
+          // Extract basic state info
           const id = feature.id || feature.properties.name;
           const name = feature.properties.name;
+
+          // Initialize array to hold all polygons for this state
           const polygons: Array<Array<[number, number]>> = [];
 
-          // Process based on geometry type
           if (feature.geometry.type === "Polygon") {
-            // For polygons, each ring is an array of coordinates
-            (feature.geometry.coordinates as Ring[]).forEach(
-              (ring: Coordinate[]) => {
-                const processedRing: Array<[number, number]> = [];
+            // For single polygons, just add all coordinate rings
+            // The first ring is the outer ring, any additional rings are holes
+            const coordinates = feature.geometry.coordinates as Array<
+              Array<[number, number]>
+            >;
 
-                ring.forEach(([lng, lat]) => {
-                  // Update bounds
-                  minX = Math.min(minX, lng);
-                  minY = Math.min(minY, lat);
-                  maxX = Math.max(maxX, lng);
-                  maxY = Math.max(maxY, lat);
+            // Add the outer ring (first ring) to the polygons
+            polygons.push(coordinates[0]);
 
-                  processedRing.push([lng, lat]);
-                });
-
-                polygons.push(processedRing);
-              },
-            );
+            // Update bounds
+            coordinates[0].forEach(([lng, lat]) => {
+              minX = Math.min(minX, lng);
+              maxX = Math.max(maxX, lng);
+              minY = Math.min(minY, lat);
+              maxY = Math.max(maxY, lat);
+            });
           } else if (feature.geometry.type === "MultiPolygon") {
-            // For multipolygons, we have an array of polygons
-            (feature.geometry.coordinates as Polygon[]).forEach(
-              (polygon: Ring[]) => {
-                polygon.forEach((ring: Coordinate[]) => {
-                  const processedRing: Array<[number, number]> = [];
+            // For multi-polygons, we have an array of polygons
+            // Each polygon has an outer ring and potentially hole rings
+            const multiCoordinates = feature.geometry.coordinates as Array<
+              Array<Array<[number, number]>>
+            >;
 
-                  ring.forEach(([lng, lat]) => {
-                    // Update bounds
-                    minX = Math.min(minX, lng);
-                    minY = Math.min(minY, lat);
-                    maxX = Math.max(maxX, lng);
-                    maxY = Math.max(maxY, lat);
+            multiCoordinates.forEach((coordinates) => {
+              // Add the outer ring (first ring) of each polygon
+              polygons.push(coordinates[0]);
 
-                    processedRing.push([lng, lat]);
-                  });
-
-                  polygons.push(processedRing);
-                });
-              },
-            );
+              // Update bounds from the outer ring coordinates
+              coordinates[0].forEach(([lng, lat]) => {
+                minX = Math.min(minX, lng);
+                maxX = Math.max(maxX, lng);
+                minY = Math.min(minY, lat);
+                maxY = Math.max(maxY, lat);
+              });
+            });
           }
 
           return {
@@ -222,18 +272,105 @@ export default function MapCanvas({
     loadGeoJSON();
   }, []);
 
-  // Render map on canvas with zoom and pan
+  // Determine which state a point is over (using spatial index)
+  const getStateAtPoint = useCallback(
+    (lng: number, lat: number) => {
+      // Fast path: use spatial index if available
+      if (spatialIndex && mapBounds) {
+        const { grid, GRID_SIZE } = spatialIndex;
+        const mapWidth = mapBounds.maxX - mapBounds.minX;
+        const mapHeight = mapBounds.maxY - mapBounds.minY;
+
+        // Calculate grid cell for this point
+        const gridX = Math.floor(
+          (GRID_SIZE * (lng - mapBounds.minX)) / mapWidth,
+        );
+        const gridY = Math.floor(
+          (GRID_SIZE * (lat - mapBounds.minY)) / mapHeight,
+        );
+
+        // Point is outside our grid
+        if (
+          gridX < 0 ||
+          gridX >= GRID_SIZE ||
+          gridY < 0 ||
+          gridY >= GRID_SIZE
+        ) {
+          return null;
+        }
+
+        // Check only states in this grid cell
+        const cell = grid[gridY][gridX];
+        for (const stateIndex of cell.stateIndices) {
+          const state = states[stateIndex];
+          if (isPointInState(lng, lat, state)) {
+            return state.id;
+          }
+        }
+        return null;
+      }
+
+      // Slow path: check all states (fallback)
+      for (const state of states) {
+        if (isPointInState(lng, lat, state)) {
+          return state.id;
+        }
+      }
+      return null;
+    },
+    [states, mapBounds, spatialIndex],
+  );
+
+  // Determine visible states based on current view
+  const getVisibleStates = useCallback(() => {
+    if (!states.length || !mapBounds) return states;
+
+    // Calculate the current viewport bounds in map coordinates
+    // This is a simplified calculation that could be more precise
+    const mapWidth = mapBounds.maxX - mapBounds.minX;
+    const mapHeight = mapBounds.maxY - mapBounds.minY;
+
+    // Approximate viewport based on the zoom level and pan
+    // This is a rough estimate - a more precise calculation would use the inverse of the canvas-to-map transform
+    const viewportWidth = mapWidth / zoomLevel;
+    const viewportHeight = mapHeight / zoomLevel;
+
+    // Calculate pan offset in map coordinates
+    const panOffsetX = (pan.x / canvasSize.width) * viewportWidth;
+    const panOffsetY = (pan.y / canvasSize.height) * viewportHeight;
+
+    // Calculate map bounds of current viewport
+    const viewMinX = mapBounds.minX - panOffsetX;
+    const viewMaxX = viewMinX + viewportWidth;
+    const viewMinY = mapBounds.minY - panOffsetY;
+    const viewMaxY = viewMinY + viewportHeight;
+
+    // Filter states to those that intersect the viewport
+    return states.filter((state) => {
+      // Quick check: see if any polygon vertex is in viewport
+      for (const polygon of state.polygons) {
+        for (const [lng, lat] of polygon) {
+          if (
+            lng >= viewMinX &&
+            lng <= viewMaxX &&
+            lat >= viewMinY &&
+            lat <= viewMaxY
+          ) {
+            return true;
+          }
+        }
+      }
+
+      // Additional check for state bounds could be added for more precision
+      return false;
+    });
+  }, [states, mapBounds, zoomLevel, pan, canvasSize]);
+
+  // Render map on canvas with zoom and pan - optimized version
   useEffect(() => {
     if (!canvasRef.current || !states.length || !mapBounds) {
-      console.log("Skipping render:", {
-        canvasRef: !!canvasRef.current,
-        statesLength: states.length,
-        mapBounds: !!mapBounds,
-      });
       return;
     }
-
-    console.log("Rendering map with", states.length, "states");
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
@@ -247,96 +384,37 @@ export default function MapCanvas({
     ctx.fillStyle = "#0A0F14"; // Dark background without gradient
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate the dimensions of the map in coordinate space
-    const mapWidth = mapBounds.maxX - mapBounds.minX;
-    const mapHeight = mapBounds.maxY - mapBounds.minY;
+    // Calculate transform parameters
+    const { scale, offsetX, offsetY } = calculateMapTransform(
+      canvasSize.width,
+      canvasSize.height,
+      mapBounds,
+      zoomLevel,
+      pan,
+    );
 
-    // Calculate scaling to fit the map in the canvas with padding
-    const padding = 40;
-    const availableWidth = canvasSize.width - padding * 2;
-    const availableHeight = canvasSize.height - padding * 2;
-
-    // Calculate scale factors for both dimensions
-    const scaleX = availableWidth / mapWidth;
-    const scaleY = availableHeight / mapHeight;
-
-    // Use the smaller scale to ensure the entire map fits
-    const scale = Math.min(scaleX, scaleY) * zoomLevel;
-
-    // Calculate offsets to center the map
-    const offsetX = padding + (availableWidth - mapWidth * scale) / 2 + pan.x;
-    const offsetY = padding + (availableHeight - mapHeight * scale) / 2 + pan.y;
-
-    // Function to convert a GeoJSON coordinate to canvas position with zoom and pan
-    function coordToCanvas(coord: [number, number]): [number, number] {
-      const [lng, lat] = coord;
-      // mapBounds is guaranteed to be non-null here because of the check at the top of this effect
-      const x = offsetX + (lng - mapBounds!.minX) * scale;
-
-      // Invert Y coordinate to flip the map right-side up
-      // In canvas, y increases downward, but in geographic coordinates, latitude increases upward
-      const y = offsetY + (mapBounds!.maxY - lat) * scale;
-
-      return [x, y];
-    }
+    // Performance optimization: only draw states that are likely to be visible
+    // For very large datasets, this can significantly improve performance
+    const stateList = states.length > 50 ? getVisibleStates() : states;
 
     // Draw each state
-    states.forEach((state) => {
-      if (!state.polygons.length) {
-        console.log(`State "${state.name}" has no polygons to draw`);
-        return;
-      }
+    stateList.forEach((state) => {
+      // Find the real index in the full states array for highlighting
+      const realIndex = states.indexOf(state);
+      const isSelected = selectedStates.has(state.id);
+      const isHovered =
+        hoveredState === state.id || realIndex === focusedStateIndex;
 
-      // Draw each polygon for this state
-      state.polygons.forEach((polygon) => {
-        if (polygon.length < 3) {
-          console.log(
-            `Skipping polygon with insufficient points in state "${state.name}"`,
-          );
-          return;
-        }
-
-        ctx.beginPath();
-
-        // Move to the first point
-        const [startX, startY] = coordToCanvas(polygon[0]);
-        ctx.moveTo(startX, startY);
-
-        // Draw lines to all other points
-        for (let i = 1; i < polygon.length; i++) {
-          const [x, y] = coordToCanvas(polygon[i]);
-          ctx.lineTo(x, y);
-        }
-
-        // Close the path
-        ctx.closePath();
-
-        // Clean fill styles based on state status
-        if (selectedStates.has(state.id)) {
-          ctx.fillStyle = "#10B981"; // Solid teal for selected
-        } else if (hoveredState === state.id) {
-          ctx.fillStyle = "#3B82F6"; // Solid blue for hover
-        } else {
-          ctx.fillStyle = "#2A3441"; // Neutral dark blue-gray
-        }
-
-        // Apply fill
-        ctx.fill();
-
-        // Borders
-        if (selectedStates.has(state.id)) {
-          ctx.lineWidth = 1.5;
-          ctx.strokeStyle = "#34D399"; // Teal border
-        } else if (hoveredState === state.id) {
-          ctx.lineWidth = 1.5;
-          ctx.strokeStyle = "#60A5FA"; // Blue border
-        } else {
-          ctx.lineWidth = 0.75;
-          ctx.strokeStyle = "#4B5563"; // Subtle border for neutral states
-        }
-
-        ctx.stroke();
-      });
+      drawState(
+        ctx,
+        state,
+        isSelected,
+        isHovered,
+        mapBounds,
+        offsetX,
+        offsetY,
+        scale,
+      );
     });
   }, [
     states,
@@ -346,38 +424,9 @@ export default function MapCanvas({
     mapBounds,
     zoomLevel,
     pan,
+    focusedStateIndex,
+    getVisibleStates,
   ]);
-
-  // Check if a point is inside a polygon using ray casting algorithm
-  const isPointInPolygon = useCallback(
-    (lng: number, lat: number, polygon: Array<[number, number]>): boolean => {
-      let inside = false;
-      for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-        const [xi, yi] = polygon[i];
-        const [xj, yj] = polygon[j];
-
-        const intersect =
-          yi > lat !== yj > lat &&
-          lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
-        if (intersect) inside = !inside;
-      }
-      return inside;
-    },
-    [],
-  );
-
-  // Check if a point is inside a state (any polygon)
-  const isPointInState = useCallback(
-    (lng: number, lat: number, state: State): boolean => {
-      for (const polygon of state.polygons) {
-        if (isPointInPolygon(lng, lat, polygon)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    [isPointInPolygon],
-  );
 
   // Convert canvas coordinates to map coordinates (for mouse/touch events)
   const canvasToMapCoordinates = useCallback(
@@ -389,22 +438,14 @@ export default function MapCanvas({
       const mouseX = clientX - rect.left;
       const mouseY = clientY - rect.top;
 
-      // Calculate map dimensions
-      const mapWidth = mapBounds.maxX - mapBounds.minX;
-      const mapHeight = mapBounds.maxY - mapBounds.minY;
-
-      // Calculate scaling
-      const padding = 40;
-      const availableWidth = canvasSize.width - padding * 2;
-      const availableHeight = canvasSize.height - padding * 2;
-      const scaleX = availableWidth / mapWidth;
-      const scaleY = availableHeight / mapHeight;
-      const scale = Math.min(scaleX, scaleY) * zoomLevel;
-
-      // Calculate offsets
-      const offsetX = padding + (availableWidth - mapWidth * scale) / 2 + pan.x;
-      const offsetY =
-        padding + (availableHeight - mapHeight * scale) / 2 + pan.y;
+      // Calculate transform parameters
+      const { scale, offsetX, offsetY } = calculateMapTransform(
+        canvasSize.width,
+        canvasSize.height,
+        mapBounds,
+        zoomLevel,
+        pan,
+      );
 
       // Convert mouse position to map coordinates
       const lng = (mouseX - offsetX) / scale + mapBounds.minX;
@@ -413,19 +454,6 @@ export default function MapCanvas({
       return { lng, lat };
     },
     [canvasSize, mapBounds, zoomLevel, pan],
-  );
-
-  // Determine which state a point is over
-  const getStateAtPoint = useCallback(
-    (lng: number, lat: number) => {
-      for (const state of states) {
-        if (isPointInState(lng, lat, state)) {
-          return state.id;
-        }
-      }
-      return null;
-    },
-    [states, isPointInState],
   );
 
   // Handle zoom with mouse wheel - reduced sensitivity
@@ -585,12 +613,89 @@ export default function MapCanvas({
     setPan({ x: 0, y: 0 });
   }, []);
 
+  // Handle keyboard navigation for accessibility
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      // If no state is focused yet, focus the first one on any navigation key
+      if (
+        focusedStateIndex === -1 &&
+        states.length > 0 &&
+        (e.key === "ArrowLeft" ||
+          e.key === "ArrowRight" ||
+          e.key === "ArrowUp" ||
+          e.key === "ArrowDown")
+      ) {
+        setFocusedStateIndex(0);
+        return;
+      }
+
+      switch (e.key) {
+        case "ArrowRight":
+        case "ArrowDown":
+          // Navigate to the next state
+          if (states.length > 0) {
+            setFocusedStateIndex((prev) => (prev + 1) % states.length);
+          }
+          e.preventDefault();
+          break;
+        case "ArrowLeft":
+        case "ArrowUp":
+          // Navigate to the previous state
+          if (states.length > 0) {
+            setFocusedStateIndex((prev) =>
+              prev <= 0 ? states.length - 1 : prev - 1,
+            );
+          }
+          e.preventDefault();
+          break;
+        case "Enter":
+        case " ": // Space
+          // Select/deselect the focused state
+          if (focusedStateIndex >= 0 && focusedStateIndex < states.length) {
+            const stateId = states[focusedStateIndex].id;
+            setSelectedStates((prev) => {
+              const newSet = new Set(prev);
+              if (newSet.has(stateId)) {
+                newSet.delete(stateId);
+              } else {
+                newSet.add(stateId);
+              }
+              return newSet;
+            });
+          }
+          e.preventDefault();
+          break;
+        case "+":
+          // Zoom in
+          setZoomLevel((prev) => Math.min(5, prev + 0.1));
+          e.preventDefault();
+          break;
+        case "-":
+          // Zoom out
+          setZoomLevel((prev) => Math.max(0.5, prev - 0.1));
+          e.preventDefault();
+          break;
+        case "r":
+        case "R":
+          // Reset view
+          resetView();
+          e.preventDefault();
+          break;
+      }
+    },
+    [focusedStateIndex, states, resetView],
+  );
+
   // Clean minimal UI with full-screen map
   return (
     <div
       ref={containerRef}
       className="relative w-full h-full min-h-[600px]"
       data-testid="map-canvas-container"
+      tabIndex={0} // Make div focusable for keyboard events
+      onKeyDown={handleKeyDown}
+      aria-label="Interactive map of US states"
+      role="application"
     >
       <canvas
         ref={canvasRef}
@@ -607,62 +712,30 @@ export default function MapCanvas({
           cursor: isDragging ? "grabbing" : hoveredState ? "pointer" : "grab",
         }}
         className="rounded-sm"
+        aria-hidden="true" // Hide canvas from screen readers since we use the parent div for interactions
       />
 
-      {/* Zoom controls */}
-      <div className="absolute bottom-4 right-4 flex gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          className="bg-background/80 backdrop-blur-sm"
-          onClick={() => setZoomLevel(Math.min(5, zoomLevel + 0.1))}
-        >
-          +
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="bg-background/80 backdrop-blur-sm"
-          onClick={() => setZoomLevel(Math.max(0.5, zoomLevel - 0.1))}
-        >
-          -
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="bg-background/80 backdrop-blur-sm"
-          onClick={resetView}
-        >
-          Reset
-        </Button>
-      </div>
+      {/* Map Controls */}
+      <MapControls
+        zoomLevel={zoomLevel}
+        setZoomLevel={setZoomLevel}
+        resetView={resetView}
+        hoveredState={
+          hoveredState ||
+          (focusedStateIndex >= 0 ? states[focusedStateIndex]?.id : null)
+        }
+        states={states}
+        selectedStates={selectedStates}
+        showTooltip={showTooltip}
+      />
 
-      {/* Control Info */}
-      <div className="absolute bottom-4 left-4 bg-background/80 backdrop-blur-sm p-2 rounded-md border border-border text-xs">
-        <span className="text-muted-foreground">
-          Right-click + drag to pan • Mouse wheel to zoom
-        </span>
-      </div>
-
-      {/* State tooltip */}
-      {hoveredState && showTooltip && (
-        <div className="absolute top-4 right-4 bg-background/80 backdrop-blur-sm p-2 rounded-md border border-border">
-          <strong className="text-foreground">
-            {states.find((s) => s.id === hoveredState)?.name || hoveredState}
-          </strong>
-          {selectedStates.has(hoveredState) && (
-            <span className="ml-2 text-primary">(Selected)</span>
-          )}
-        </div>
-      )}
-
-      {/* Selected count */}
-      {selectedStates.size > 0 && (
-        <div className="absolute top-4 left-4 bg-background/80 backdrop-blur-sm p-2 rounded-md border border-border">
-          <span className="text-foreground">
-            Selected: {selectedStates.size}{" "}
-            {selectedStates.size === 1 ? "state" : "states"}
-          </span>
+      {/* Invisible text for screen readers to announce focused state */}
+      {focusedStateIndex >= 0 && focusedStateIndex < states.length && (
+        <div className="sr-only" aria-live="polite">
+          {states[focusedStateIndex].name}
+          {selectedStates.has(states[focusedStateIndex].id)
+            ? " - Selected"
+            : ""}
         </div>
       )}
     </div>

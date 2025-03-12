@@ -57,61 +57,17 @@ map-painter-io/
 └── README.md                # Project guide and high-level documentation
 ```
 
-## Key Components
+## Standards 
 
-### Data Models
+### Component Architecture Standards
+- **Separation of Concerns:** UI components should be separated from logic utilities
+- **Single Responsibility:** Each component should handle one specific aspect of functionality
+- **Prop Interface Standards:** All components must have clearly defined prop interfaces
+- **State Management:** Local component state for UI concerns, global state for shared data
 
-- **Player:** Contains `id`, `name`, `color`, `resources`, `ownedStates`, and (optionally) a Clerk-authenticated identifier.
-- **State:** Represents each game state with `id`, an optional `ownerId`, `color`, and neighboring states.
-- **GameInstance:** Aggregates the current game state, including maps of states and players, and a start timestamp.
-
-### Authentication & Metrics (Optional)
-
-- **Clerk Integration:**  
-  - Use the Clerk Next.js SDK to wrap or protect routes.  
-  - Users can log in to receive a personalized username; if they opt out (guest mode), assign a default username while still tracking metrics.
-  - Optionally integrate Clerk’s built-in analytics or custom tracking to monitor user behavior.
-
-### Persistence Layer with Supabase
-
-- **Supabase Integration:**  
-  - Set up a Supabase client using environment variables within Next.js.  
-  - Create tables for persisting user metrics, game events, and session data.
-  - Use Supabase’s real-time features if needed to complement the WebSocket updates.
-  - Retain Vercel KV for high-speed, ephemeral game state updates while using Supabase for durable storage.
-
-### Client Architecture
-
-- **Map Rendering:** Handled by a PixiJS-powered `MapCanvas` component.
-- **State Synchronization:** Managed via Redux Toolkit and RTK Query, with WebSocket connections for real-time updates.
-- **Auth Handling:** Integrate Clerk’s React components for login/signup flows on the client. Provide a fallback for guest users.
-
-### Server Architecture
-
-- **Custom Next.js Server:**  
-  - Integrate WebSocket support using `ws` for real-time communications.  
-  - Incorporate Clerk middleware if auth is enabled.
-- **Storage Layer:**  
-  - Use Vercel KV for in-memory game state management.
-  - Use Supabase for persistent data (user metrics, game logs, etc.) and potentially for reporting and analytics.
-
-## Integration Details
-
-### Clerk Integration
-
-- **SDK Setup:**  
-  - Install the Clerk SDK and configure it in your Next.js app (usually in a middleware or layout component).
-  - Use Clerk’s hooks (e.g., `useUser`) to access user data in components.
-- **Optional Flow:**  
-  - Provide a “guest mode” where users can skip authentication, automatically assigning them a default username.
-  - Ensure metrics and event tracking still work regardless of the authentication state.
-
-### Supabase Integration
-
-- **Client Initialization:**  
-  - Set up the Supabase client in a dedicated file (e.g., `src/lib/persistence/supabaseClient.ts`).
-  - Use environment variables for Supabase URL and keys.
-- **Data Persistence:**  
-  - Create API routes or service layers to interact with Supabase for CRUD operations on user metrics and game data.
-  - Design tables for user profiles (even if optional), game sessions, and event logs.
-  - Consider leveraging Supabase’s real-time subscriptions for additional reactive features if needed.
+### Performance Requirements
+- **Large Dataset Handling:** All map components must implement optimizations for datasets >50 items
+- **Spatial Indexing:** Use grid-based spatial indexing for point-in-polygon operations
+- **Viewport Culling:** Render only visible elements when dealing with complex visualizations
+- **Memory Management:** Implement proper cleanup in useEffect returns
+- **Dependency Management:** Optimize React hook dependency arrays to prevent unnecessary rerenders
