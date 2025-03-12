@@ -30,8 +30,7 @@ A player wins by controlling 100% of the map regions.
   - Redux Toolkit for state management
   - Shadcn/ui components
 - **Backend**:
-  - WebSocket server (`ws` library)
-  - Vercel KV for data storage
+  - Supabase Realtime & Database
 - **Styling**: Tailwind CSS
 - **Testing**:
   - Vitest for unit tests
@@ -48,7 +47,7 @@ A player wins by controlling 100% of the map regions.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/map-painter-io.git
+git clone https://github.com/chrishart0/map-painter-io.git
 cd map-painter-io
 
 # Install dependencies

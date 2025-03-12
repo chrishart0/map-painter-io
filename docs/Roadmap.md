@@ -35,9 +35,23 @@
 
 ---
 
-## Sprint 2: Core Mechanics – Claiming States & Resource Management
+### User Story: Real-Time Updates via WebSockets
 
-### User Story 3: State Claiming Mechanism
+- **Title:** Integrate WebSocket for real-time game state synchronization
+- **Description:** As a player, I want to see real-time updates of map changes and resource counts so that my game is always in sync with other players.
+- **Acceptance Criteria:**
+  - A WebSocket connection is established between client and server using the `ws` library.
+  - Map changes (claims and attacks) are broadcast to all players in a game instance.
+  - Resource updates are broadcast every 5 seconds.
+- **Tasks:**
+  - [ ] Set up a WebSocket server utilizing supabase.
+  - [ ] Implement broadcast functionality for game state changes.
+  - [ ] Schedule regular resource update messages.
+  - [ ] Test real-time synchronization with multiple simulated players.
+
+## Sprint: Core Mechanics – Claiming States & Resource Management
+
+### User Story: State Claiming Mechanism
 
 - **Title:** Implement claiming of adjacent neutral states
 - **Description:** As a player, I want to claim an adjacent neutral state by spending resources so I can expand my territory.
@@ -53,9 +67,9 @@
 
 ---
 
-## Sprint 3: Attack Mechanics & Strength Calculation
+## Sprint: Attack Mechanics & Strength Calculation
 
-### User Story 4: Attack Functionality
+### User Story: Attack Functionality
 
 - **Title:** Enable players to attack enemy states
 - **Description:** As a player, I want to attack an adjacent enemy state by spending resources so that I can capture it.
@@ -72,23 +86,9 @@
 
 ---
 
-## Sprint 4: Real-Time Multiplayer & Game Instances
+## Sprint: Real-Time Multiplayer & Game Instances
 
-### User Story 5: Real-Time Updates via WebSockets
-
-- **Title:** Integrate WebSocket for real-time game state synchronization
-- **Description:** As a player, I want to see real-time updates of map changes and resource counts so that my game is always in sync with other players.
-- **Acceptance Criteria:**
-  - A WebSocket connection is established between client and server using the `ws` library.
-  - Map changes (claims and attacks) are broadcast to all players in a game instance.
-  - Resource updates are broadcast every 5 seconds.
-- **Tasks:**
-  - [ ] Set up a WebSocket server within the Next.js custom server.
-  - [ ] Implement broadcast functionality for game state changes.
-  - [ ] Schedule regular resource update messages.
-  - [ ] Test real-time synchronization with multiple simulated players.
-
-### User Story 6: Multiple Game Instances
+### User Story: Multiple Game Instances
 
 - **Title:** Support concurrent game rooms
 - **Description:** As a player, I want to join or create a game instance (room) so I can play with a specific group without interference from other games.
@@ -103,9 +103,9 @@
 
 ---
 
-## Sprint 5: UI Enhancements & Player Feedback
+## Sprint: UI Enhancements & Player Feedback
 
-### User Story 7: Enhanced Game UI & Player Statistics
+### User Story: Enhanced Game UI & Player Statistics
 
 - **Title:** Improve UI to display game stats and player information
 - **Description:** As a player, I want to see my resource count, owned states, and a list of players with their scores, so that I can track my progress and understand the game dynamics.
@@ -121,9 +121,9 @@
 
 ---
 
-## Sprint 6: Authentication & Persistent Storage
+## Sprint: Authentication & Persistent Storage
 
-### User Story 8: Optional User Authentication with Clerk
+### User Story: Optional User Authentication with Clerk
 
 - **Title:** Integrate Clerk for optional user authentication
 - **Description:** As a player, I want the option to log in using Clerk so that I can have a personalized username and track my game metrics, or play as a guest.
@@ -137,7 +137,7 @@
   - [ ] Implement guest mode fallback.
   - [ ] Test login flow and user data handling.
 
-### User Story 9: Persistent Data Storage with Supabase
+### User Story: Persistent Data Storage with Supabase
 
 - **Title:** Implement data persistence for game metrics
 - **Description:** As a developer, I want to store game metrics and user data in Supabase so that I can analyze game performance and ensure data durability.
@@ -153,9 +153,9 @@
 
 ---
 
-## Sprint 7: Testing, Optimization & Documentation
+## Sprint: Testing, Optimization & Documentation
 
-### User Story 10: Automated Testing & CI/CD Integration
+### User Story: Automated Testing & CI/CD Integration
 
 - **Title:** Write unit and end-to-end tests; set up CI/CD pipelines
 - **Description:** As a developer, I want automated tests (Vitest and Playwright) and CI/CD pipelines in place so that I can ensure code quality and reliable deployments.
@@ -169,7 +169,7 @@
   - [ ] Configure GitHub Actions workflows for continuous integration.
   - [ ] Optimize performance based on testing feedback.
 
-### User Story 11: Final Documentation & Deployment Preparation
+### User Story: Final Documentation & Deployment Preparation
 
 - **Title:** Complete project documentation and deployment configuration
 - **Description:** As a developer, I want comprehensive documentation and clear deployment instructions so that future maintenance and scaling are straightforward.

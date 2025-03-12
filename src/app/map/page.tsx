@@ -2,6 +2,8 @@ import MapWrapper from "@/components/Map/MapWrapper";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { GameStatus } from "@/components/GameStatus";
+import { GameResourceCounter } from "@/components/GameResourceCounter";
 
 export const metadata = {
   title: "Map Painter.io - Interactive Map",
@@ -62,6 +64,8 @@ export default function MapPage() {
       </header>
 
       <main className="flex-1 relative overflow-hidden">
+        <GameStatus />
+        <GameResourceCounter />
         <MapWrapper width={1000} height={600} />
       </main>
     </div>

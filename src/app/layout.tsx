@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
+import { GameRealtimeProvider } from "@/lib/contexts/GameRealtimeContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,7 +30,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeProvider>{children}</ThemeProvider>
+        <GameRealtimeProvider>
+          <ThemeProvider>{children}</ThemeProvider>
+        </GameRealtimeProvider>
         <Analytics />
       </body>
     </html>

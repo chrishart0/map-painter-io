@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:server": "tsx src/server/index.ts",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -26,6 +28,7 @@
     "@radix-ui/react-hover-card": "^1.1.6",
     "@radix-ui/react-slot": "^1.1.2",
     "@reduxjs/toolkit": "^2.6.1",
+    "@supabase/supabase-js": "^2.49.1",
     "@vercel/analytics": "^1.5.0",
     "@vercel/kv": "^3.0.0",
     "class-variance-authority": "^0.7.1",
@@ -41,6 +44,7 @@
     "tailwind-merge": "^3.0.2",
     "tailwindcss": "^4.0.13",
     "tailwindcss-animate": "^1.0.7",
+    "uuid": "^11.1.0",
     "ws": "^8.18.1"
   },
   "devDependencies": {
@@ -50,11 +54,14 @@
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
     "eslint": "^9",
     "eslint-config-next": "15.2.2",
     "eslint-plugin-next": "^0.0.0",
@@ -64,6 +71,7 @@
     "prettier": "^3.5.3",
     "prettier-plugin-tailwindcss": "^0.6.11",
     "tailwindcss": "^4",
+    "tsx": "^4.19.3",
     "typescript": "^5",
     "typescript-eslint": "^8.26.1",
     "vitest": "^3.0.8"
