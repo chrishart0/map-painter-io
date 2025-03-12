@@ -6,10 +6,15 @@ alwaysApply: false
 ## Installing packages
 NEVER add a package directly to a package.json, pyproject.toml, etc. Always use the install command. LLMs don't know the latest version numbers. 
 
+## Appearance
+Utalize ShadCDN for a sleek, modern, techy appearance. Take a dark mode first approach. 
+
+Ensure CSS is well organized.
 
 ## Definition of Done for Cursor AI Tasks
 
 1. **Unit Tests:**
+   - **Funcation tests:** Test for functionality, not implementation details. We don't want to get locked into 1 way of doing things, we just want to ensure we don't break desired functionality. 
    - **Write First:** Write comprehensive unit tests for every new feature *before* writing the implementation.
    - **Test Coverage:** Ensure all critical paths and edge cases are covered.
    - **Pass Rate:** Confirm that all unit tests pass without errors.

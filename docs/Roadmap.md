@@ -25,10 +25,13 @@
   - States are rendered as polygons with a neutral color.
   - Each state is clickable.
 - **Tasks:**
-  - [ ] Add a simplified GeoJSON file (12-15 states) into the `public` folder.
+  - [ ] Add a GeoJSON file into the `public` folder.
   - [ ] Implement canvas rendering logic to draw the GeoJSON polygons.
   - [ ] Add click event listeners for each state.
   - [ ] Verify that the map renders correctly and is interactive.
+  - [ ] Mobile optimized
+  - [ ] Supports scaling
+  - [ ] Supports selecting a state to see details
 
 ---
 
