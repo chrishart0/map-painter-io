@@ -10,23 +10,14 @@
  * - Click interactions to select/deselect states
  * - Responsive design that scales with its container
  * - Touch support for mobile devices
- *
- * The component uses ShadcnUI for styling with a dark mode first approach.
- * It integrates with the application's theme system for consistent styling.
+ * - Zoom and pan functionality similar to territorial.io
  *
  * @component
  * @example
  * <MapCanvas width={800} height={600} />
  */
 
-import { useEffect, useRef, useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardFooter,
-} from "@/components/ui/card";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 
 interface MapCanvasProps {
@@ -81,6 +72,13 @@ export default function MapCanvas({
   } | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width, height });
 
+  // Zoom and pan functionality
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [showTooltip] = useState(true);
+
   // Handle container resizing for responsive layout
   useEffect(() => {
     if (!containerRef.current) return;
@@ -92,9 +90,12 @@ export default function MapCanvas({
       if (currentContainer) {
         // Make the canvas fill its container, but respect provided size limits
         const containerWidth = currentContainer.clientWidth;
-        // Set a max width if needed, otherwise use the container width
-        const newWidth = Math.min(containerWidth, width);
-        setCanvasSize({ width: newWidth, height: (newWidth / width) * height });
+        const containerHeight = currentContainer.clientHeight;
+        // Set full dimensions for more immersive experience
+        setCanvasSize({
+          width: containerWidth,
+          height: containerHeight,
+        });
       }
     };
 
@@ -109,7 +110,7 @@ export default function MapCanvas({
       resizeObserver.unobserve(currentContainer);
       resizeObserver.disconnect();
     };
-  }, [width, height]);
+  }, []);
 
   // Load and process GeoJSON data
   useEffect(() => {
@@ -221,7 +222,7 @@ export default function MapCanvas({
     loadGeoJSON();
   }, []);
 
-  // Render map on canvas
+  // Render map on canvas with zoom and pan
   useEffect(() => {
     if (!canvasRef.current || !states.length || !mapBounds) {
       console.log("Skipping render:", {
@@ -242,10 +243,8 @@ export default function MapCanvas({
     canvas.width = canvasSize.width;
     canvas.height = canvasSize.height;
 
-    // Clear the canvas - use a dark background in dark mode
-    // Note: We can't use CSS variables directly in canvas, so we use actual colors
-    // Dark mode background color - using a dark gray
-    ctx.fillStyle = "#171717"; // Dark background
+    // Clear the canvas - use a clean dark background
+    ctx.fillStyle = "#0A0F14"; // Dark background without gradient
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Calculate the dimensions of the map in coordinate space
@@ -253,7 +252,7 @@ export default function MapCanvas({
     const mapHeight = mapBounds.maxY - mapBounds.minY;
 
     // Calculate scaling to fit the map in the canvas with padding
-    const padding = 20;
+    const padding = 40;
     const availableWidth = canvasSize.width - padding * 2;
     const availableHeight = canvasSize.height - padding * 2;
 
@@ -262,13 +261,13 @@ export default function MapCanvas({
     const scaleY = availableHeight / mapHeight;
 
     // Use the smaller scale to ensure the entire map fits
-    const scale = Math.min(scaleX, scaleY);
+    const scale = Math.min(scaleX, scaleY) * zoomLevel;
 
     // Calculate offsets to center the map
-    const offsetX = padding + (availableWidth - mapWidth * scale) / 2;
-    const offsetY = padding + (availableHeight - mapHeight * scale) / 2;
+    const offsetX = padding + (availableWidth - mapWidth * scale) / 2 + pan.x;
+    const offsetY = padding + (availableHeight - mapHeight * scale) / 2 + pan.y;
 
-    // Function to convert a GeoJSON coordinate to canvas position
+    // Function to convert a GeoJSON coordinate to canvas position with zoom and pan
     function coordToCanvas(coord: [number, number]): [number, number] {
       const [lng, lat] = coord;
       // mapBounds is guaranteed to be non-null here because of the check at the top of this effect
@@ -312,103 +311,239 @@ export default function MapCanvas({
         // Close the path
         ctx.closePath();
 
-        // Fill style based on state status - using actual colors instead of CSS variables
+        // Clean fill styles based on state status
         if (selectedStates.has(state.id)) {
-          ctx.fillStyle = "#4CAF50"; // Green for selected
+          ctx.fillStyle = "#10B981"; // Solid teal for selected
         } else if (hoveredState === state.id) {
-          ctx.fillStyle = "#3B82F6"; // Blue for hover
+          ctx.fillStyle = "#3B82F6"; // Solid blue for hover
         } else {
-          ctx.fillStyle = "#374151"; // Dark gray for neutral states
+          ctx.fillStyle = "#2A3441"; // Neutral dark blue-gray
         }
 
-        // Fill and stroke
+        // Apply fill
         ctx.fill();
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = "#525252"; // Border color
+
+        // Borders
+        if (selectedStates.has(state.id)) {
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = "#34D399"; // Teal border
+        } else if (hoveredState === state.id) {
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = "#60A5FA"; // Blue border
+        } else {
+          ctx.lineWidth = 0.75;
+          ctx.strokeStyle = "#4B5563"; // Subtle border for neutral states
+        }
+
         ctx.stroke();
       });
     });
-  }, [states, hoveredState, selectedStates, canvasSize, mapBounds]);
+  }, [
+    states,
+    hoveredState,
+    selectedStates,
+    canvasSize,
+    mapBounds,
+    zoomLevel,
+    pan,
+  ]);
+
+  // Check if a point is inside a polygon using ray casting algorithm
+  const isPointInPolygon = useCallback(
+    (lng: number, lat: number, polygon: Array<[number, number]>): boolean => {
+      let inside = false;
+      for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const [xi, yi] = polygon[i];
+        const [xj, yj] = polygon[j];
+
+        const intersect =
+          yi > lat !== yj > lat &&
+          lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    },
+    [],
+  );
+
+  // Check if a point is inside a state (any polygon)
+  const isPointInState = useCallback(
+    (lng: number, lat: number, state: State): boolean => {
+      for (const polygon of state.polygons) {
+        if (isPointInPolygon(lng, lat, polygon)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [isPointInPolygon],
+  );
 
   // Convert canvas coordinates to map coordinates (for mouse/touch events)
-  const canvasToMapCoordinates = (clientX: number, clientY: number) => {
-    if (!canvasRef.current || !mapBounds) return null;
+  const canvasToMapCoordinates = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!canvasRef.current || !mapBounds) return null;
 
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = clientX - rect.left;
-    const mouseY = clientY - rect.top;
+      const canvas = canvasRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = clientX - rect.left;
+      const mouseY = clientY - rect.top;
 
-    // Calculate map dimensions
-    const mapWidth = mapBounds.maxX - mapBounds.minX;
-    const mapHeight = mapBounds.maxY - mapBounds.minY;
+      // Calculate map dimensions
+      const mapWidth = mapBounds.maxX - mapBounds.minX;
+      const mapHeight = mapBounds.maxY - mapBounds.minY;
 
-    // Calculate scaling
-    const padding = 20;
-    const availableWidth = canvasSize.width - padding * 2;
-    const availableHeight = canvasSize.height - padding * 2;
-    const scaleX = availableWidth / mapWidth;
-    const scaleY = availableHeight / mapHeight;
-    const scale = Math.min(scaleX, scaleY);
+      // Calculate scaling
+      const padding = 40;
+      const availableWidth = canvasSize.width - padding * 2;
+      const availableHeight = canvasSize.height - padding * 2;
+      const scaleX = availableWidth / mapWidth;
+      const scaleY = availableHeight / mapHeight;
+      const scale = Math.min(scaleX, scaleY) * zoomLevel;
 
-    // Calculate offsets
-    const offsetX = padding + (availableWidth - mapWidth * scale) / 2;
-    const offsetY = padding + (availableHeight - mapHeight * scale) / 2;
+      // Calculate offsets
+      const offsetX = padding + (availableWidth - mapWidth * scale) / 2 + pan.x;
+      const offsetY =
+        padding + (availableHeight - mapHeight * scale) / 2 + pan.y;
 
-    // Convert mouse position to map coordinates
-    const lng = (mouseX - offsetX) / scale + mapBounds.minX;
+      // Convert mouse position to map coordinates
+      const lng = (mouseX - offsetX) / scale + mapBounds.minX;
+      const lat = mapBounds.maxY - (mouseY - offsetY) / scale;
 
-    // Apply the inverse of our coordinate transform to get the correct latitude
-    // We inverted the Y axis in coordToCanvas, so we need to invert it here too
-    const lat = mapBounds.maxY - (mouseY - offsetY) / scale;
-
-    return { lng, lat };
-  };
+      return { lng, lat };
+    },
+    [canvasSize, mapBounds, zoomLevel, pan],
+  );
 
   // Determine which state a point is over
-  const getStateAtPoint = (lng: number, lat: number) => {
-    for (const state of states) {
-      if (isPointInState(lng, lat, state)) {
-        return state.id;
+  const getStateAtPoint = useCallback(
+    (lng: number, lat: number) => {
+      for (const state of states) {
+        if (isPointInState(lng, lat, state)) {
+          return state.id;
+        }
       }
-    }
-    return null;
-  };
+      return null;
+    },
+    [states, isPointInState],
+  );
 
-  // Handle mouse move to detect hovering over states
-  const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    const coords = canvasToMapCoordinates(event.clientX, event.clientY);
-    if (!coords) return;
+  // Handle zoom with mouse wheel - reduced sensitivity
+  const handleWheel = useCallback(
+    (event: React.WheelEvent<HTMLCanvasElement>) => {
+      event.preventDefault();
 
-    const { lng, lat } = coords;
-    const newHoveredState = getStateAtPoint(lng, lat);
+      // Reduce sensitivity by a factor of 3
+      const delta = event.deltaY * -0.003;
+      const newZoom = Math.max(0.5, Math.min(5, zoomLevel + delta));
 
-    if (newHoveredState !== hoveredState) {
-      setHoveredState(newHoveredState);
-    }
-  };
+      setZoomLevel(newZoom);
+    },
+    [zoomLevel],
+  );
+
+  // Handle right-click drag to pan
+  const handleMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLCanvasElement>) => {
+      // Only start dragging on right-click (button 2)
+      if (event.button === 2) {
+        event.preventDefault();
+        setIsDragging(true);
+        setDragStart({ x: event.clientX - pan.x, y: event.clientY - pan.y });
+      }
+    },
+    [pan],
+  );
+
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLCanvasElement>) => {
+      // First check for hover state
+      const coords = canvasToMapCoordinates(event.clientX, event.clientY);
+      if (coords) {
+        const { lng, lat } = coords;
+        const newHoveredState = getStateAtPoint(lng, lat);
+
+        if (newHoveredState !== hoveredState) {
+          setHoveredState(newHoveredState);
+        }
+      }
+
+      // Then handle dragging if active
+      if (isDragging) {
+        setPan({
+          x: event.clientX - dragStart.x,
+          y: event.clientY - dragStart.y,
+        });
+      }
+    },
+    [
+      isDragging,
+      dragStart,
+      hoveredState,
+      canvasToMapCoordinates,
+      getStateAtPoint,
+    ],
+  );
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
 
   // Handle touch events for mobile
-  const handleTouchMove = (event: React.TouchEvent<HTMLCanvasElement>) => {
-    // Prevent scrolling while touching the map
-    event.preventDefault();
+  const handleTouchMove = useCallback(
+    (event: React.TouchEvent<HTMLCanvasElement>) => {
+      // Prevent scrolling while touching the map
+      event.preventDefault();
 
-    if (event.touches.length === 1) {
-      const touch = event.touches[0];
-      const coords = canvasToMapCoordinates(touch.clientX, touch.clientY);
-      if (!coords) return;
+      if (event.touches.length === 1) {
+        const touch = event.touches[0];
 
-      const { lng, lat } = coords;
-      const newHoveredState = getStateAtPoint(lng, lat);
+        // Handle panning
+        if (isDragging) {
+          setPan({
+            x: touch.clientX - dragStart.x,
+            y: touch.clientY - dragStart.y,
+          });
+        }
 
-      if (newHoveredState !== hoveredState) {
-        setHoveredState(newHoveredState);
+        // Update hovered state
+        const coords = canvasToMapCoordinates(touch.clientX, touch.clientY);
+        if (!coords) return;
+
+        const { lng, lat } = coords;
+        const newHoveredState = getStateAtPoint(lng, lat);
+
+        if (newHoveredState !== hoveredState) {
+          setHoveredState(newHoveredState);
+        }
       }
-    }
-  };
+    },
+    [
+      canvasToMapCoordinates,
+      getStateAtPoint,
+      hoveredState,
+      isDragging,
+      dragStart,
+    ],
+  );
+
+  const handleTouchStart = useCallback(
+    (event: React.TouchEvent<HTMLCanvasElement>) => {
+      if (event.touches.length === 1) {
+        const touch = event.touches[0];
+        setIsDragging(true);
+        setDragStart({ x: touch.clientX - pan.x, y: touch.clientY - pan.y });
+      }
+    },
+    [pan],
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    setIsDragging(false);
+  }, []);
 
   // Handle clicks/touches to select/deselect states
-  const handleStateSelect = () => {
+  const handleStateSelect = useCallback(() => {
     if (hoveredState) {
       setSelectedStates((prev) => {
         const newSet = new Set(prev);
@@ -420,126 +555,97 @@ export default function MapCanvas({
         return newSet;
       });
     }
-  };
+  }, [hoveredState]);
 
-  // Check if a point is inside a state (any polygon)
-  function isPointInState(lng: number, lat: number, state: State): boolean {
-    for (const polygon of state.polygons) {
-      if (isPointInPolygon(lng, lat, polygon)) {
-        return true;
-      }
-    }
-    return false;
-  }
+  // Reset zoom and pan
+  const resetView = useCallback(() => {
+    setZoomLevel(1);
+    setPan({ x: 0, y: 0 });
+  }, []);
 
-  // Check if a point is inside a polygon using ray casting algorithm
-  function isPointInPolygon(
-    lng: number,
-    lat: number,
-    polygon: Array<[number, number]>,
-  ): boolean {
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      const [xi, yi] = polygon[i];
-      const [xj, yj] = polygon[j];
-
-      const intersect =
-        yi > lat !== yj > lat &&
-        lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  }
-
-  // Updated UI with shadcn components
+  // Clean minimal UI with full-screen map
   return (
     <div
       ref={containerRef}
-      className="relative w-full"
+      className="relative w-full h-full min-h-[600px]"
       data-testid="map-canvas-container"
     >
-      <Card className="mb-4 bg-card text-card-foreground">
-        <CardHeader className="p-4">
-          <CardTitle className="text-xl">Interactive US Map</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <canvas
-            ref={canvasRef}
-            onMouseMove={handleMouseMove}
-            onClick={handleStateSelect}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleStateSelect}
-            style={{
-              width: canvasSize.width,
-              height: canvasSize.height,
-              touchAction: "none", // Important for preventing scroll on touch
-            }}
-            className="rounded-md"
-          />
-          {hoveredState && (
-            <div className="absolute top-4 right-4 bg-card p-2 rounded-md shadow-md border border-border">
-              <strong className="text-card-foreground">
-                {states.find((s) => s.id === hoveredState)?.name ||
-                  hoveredState}
-              </strong>
-              {selectedStates.has(hoveredState) && (
-                <span className="ml-2 text-primary">(Selected)</span>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <canvas
+        ref={canvasRef}
+        onMouseMove={handleMouseMove}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onClick={handleStateSelect}
+        onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onContextMenu={(e) => e.preventDefault()} // Prevent context menu on right-click
+        style={{
+          width: "100%",
+          height: "100%",
+          touchAction: "none", // Important for preventing scroll on touch
+          cursor: isDragging ? "grabbing" : hoveredState ? "pointer" : "grab",
+        }}
+        className="rounded-sm"
+      />
 
-      {/* State Details Panel */}
+      {/* Zoom controls */}
+      <div className="absolute bottom-4 right-4 flex gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="bg-background/80 backdrop-blur-sm"
+          onClick={() => setZoomLevel(Math.min(5, zoomLevel + 0.1))}
+        >
+          +
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="bg-background/80 backdrop-blur-sm"
+          onClick={() => setZoomLevel(Math.max(0.5, zoomLevel - 0.1))}
+        >
+          -
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="bg-background/80 backdrop-blur-sm"
+          onClick={resetView}
+        >
+          Reset
+        </Button>
+      </div>
+
+      {/* Control Info */}
+      <div className="absolute bottom-4 left-4 bg-background/80 backdrop-blur-sm p-2 rounded-md border border-border text-xs">
+        <span className="text-muted-foreground">
+          Right-click + drag to pan • Mouse wheel to zoom
+        </span>
+      </div>
+
+      {/* State tooltip */}
+      {hoveredState && showTooltip && (
+        <div className="absolute top-4 right-4 bg-background/80 backdrop-blur-sm p-2 rounded-md border border-border">
+          <strong className="text-foreground">
+            {states.find((s) => s.id === hoveredState)?.name || hoveredState}
+          </strong>
+          {selectedStates.has(hoveredState) && (
+            <span className="ml-2 text-primary">(Selected)</span>
+          )}
+        </div>
+      )}
+
+      {/* Selected count */}
       {selectedStates.size > 0 && (
-        <Card className="bg-card text-card-foreground">
-          <CardHeader className="p-4">
-            <CardTitle className="text-lg">Selected States</CardTitle>
-          </CardHeader>
-          <CardContent className="p-4">
-            <ul className="divide-y divide-border">
-              {Array.from(selectedStates).map((stateId) => {
-                const state = states.find((s) => s.id === stateId);
-                if (!state) return null;
-
-                return (
-                  <li
-                    key={state.id}
-                    className="py-2 flex justify-between items-center"
-                  >
-                    <span className="font-medium text-card-foreground">
-                      {state.name}
-                    </span>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedStates((prev) => {
-                          const newSet = new Set(prev);
-                          newSet.delete(state.id);
-                          return newSet;
-                        });
-                      }}
-                    >
-                      Remove
-                    </Button>
-                  </li>
-                );
-              })}
-            </ul>
-          </CardContent>
-          {selectedStates.size > 0 && (
-            <CardFooter className="p-4 flex justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setSelectedStates(new Set())}
-              >
-                Clear All
-              </Button>
-            </CardFooter>
-          )}
-        </Card>
+        <div className="absolute top-4 left-4 bg-background/80 backdrop-blur-sm p-2 rounded-md border border-border">
+          <span className="text-foreground">
+            Selected: {selectedStates.size}{" "}
+            {selectedStates.size === 1 ? "state" : "states"}
+          </span>
+        </div>
       )}
     </div>
   );

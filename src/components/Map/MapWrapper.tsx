@@ -11,6 +11,7 @@
  * - Provides a loading fallback during dynamic import
  * - Handles client-side only rendering of canvas elements
  * - Passes dimension props to the MapCanvas component
+ * - Full-screen immersive map experience
  *
  * @component
  * @example
@@ -37,14 +38,17 @@ export default function MapWrapper({
   height = 600,
 }: MapWrapperProps) {
   return (
-    <Suspense
-      fallback={
-        <div className="w-full h-[600px] border border-border rounded-md bg-card/50 flex items-center justify-center text-card-foreground">
-          Loading map...
-        </div>
-      }
-    >
-      <MapCanvas width={width} height={height} />
-    </Suspense>
+    <div className="w-full h-full relative">
+      <Suspense
+        fallback={
+          <div className="w-full h-[600px] flex flex-col items-center justify-center text-foreground">
+            <div className="w-16 h-16 rounded-full border-4 border-t-primary border-r-transparent border-b-transparent border-l-transparent animate-spin mb-4" />
+            <p className="text-lg font-medium animate-pulse">Loading map...</p>
+          </div>
+        }
+      >
+        <MapCanvas width={width} height={height} />
+      </Suspense>
+    </div>
   );
 }

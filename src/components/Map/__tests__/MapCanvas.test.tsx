@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor, screen } from "@testing-library/react";
 import MapCanvas from "../MapCanvas";
 
 // Mock fetch to return sample GeoJSON data
@@ -71,6 +71,16 @@ const mockGetContext = vi.fn(() => ({
   setLineDash: vi.fn(),
   fillText: vi.fn(),
   measureText: vi.fn(() => ({ width: 50 })),
+  createLinearGradient: vi.fn(() => ({
+    addColorStop: vi.fn(),
+  })),
+  createRadialGradient: vi.fn(() => ({
+    addColorStop: vi.fn(),
+  })),
+  shadowColor: "",
+  shadowBlur: 0,
+  shadowOffsetX: 0,
+  shadowOffsetY: 0,
 }));
 
 describe("MapCanvas Component", () => {
@@ -135,6 +145,31 @@ describe("MapCanvas Component", () => {
     });
   });
 
+  it("renders zoom controls", async () => {
+    render(<MapCanvas />);
+
+    await waitFor(() => {
+      const zoomInButton = screen.getByText("+");
+      const zoomOutButton = screen.getByText("-");
+      const resetButton = screen.getByText("Reset");
+
+      expect(zoomInButton).toBeInTheDocument();
+      expect(zoomOutButton).toBeInTheDocument();
+      expect(resetButton).toBeInTheDocument();
+    });
+  });
+
+  it("renders control info", async () => {
+    render(<MapCanvas />);
+
+    await waitFor(() => {
+      const controlInfo = screen.getByText(
+        /Right-click \+ drag to pan • Mouse wheel to zoom/i,
+      );
+      expect(controlInfo).toBeInTheDocument();
+    });
+  });
+
   // Skip the problematic tests for now
   it.skip("updates hoveredState on mouse move", async () => {
     // This test needs more work to properly mock the state detection
@@ -150,8 +185,22 @@ describe("MapCanvas Component", () => {
     );
   });
 
-  it.skip("toggles state selection on click", async () => {
+  it.skip("toggles state selection on left-click", async () => {
     // This test needs more work to properly mock the state selection
+    const { container } = render(<MapCanvas />);
+
+    // Wait for data to load
+    await waitFor(
+      () => {
+        const canvas = container.querySelector("canvas");
+        expect(canvas).not.toBeNull();
+      },
+      { timeout: 1000 },
+    );
+  });
+
+  it.skip("pans the map on right-click drag", async () => {
+    // This test would need to simulate right-click and drag
     const { container } = render(<MapCanvas />);
 
     // Wait for data to load
