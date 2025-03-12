@@ -3,11 +3,12 @@ description: Tools and technical specs for the repo
 globs: 
 alwaysApply: false
 ---
-
 ## Overview
+
 Map Painter .io is a real-time multiplayer map game template built with Next.js 15 and React 19. The design prioritizes testability, maintainability, and extensibility. The project leverages modern tools and practices (including heavy AI-assisted development) to create a cutting-edge, scalable game platform.
 
 ## Technology Stack
+
 - **Framework**: Next.js 15 (using the app router for full-stack capabilities)
 - **Language**: TypeScript 5.4+ (modern features like `satisfies`)
 - **Frontend**:
@@ -28,6 +29,7 @@ Map Painter .io is a real-time multiplayer map game template built with Next.js 
   - **CI/CD**: GitHub Actions with Husky and lint-staged for pre-commit hooks
 
 ### Modern Choices Rationale
+
 - **Vitest**: Optimized for speed with modern ESM support.
 - **Playwright**: Superior cross-browser and WebSocket testing.
 - **Vercel KV**: Scalable, serverless key-value storage that simplifies Redis integration.
