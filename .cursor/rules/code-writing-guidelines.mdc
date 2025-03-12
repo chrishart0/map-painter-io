@@ -1,0 +1,46 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+## Installing packages
+NEVER add a package directly to a package.json, pyproject.toml, etc. Always use the install command. LLMs don't know the latest version numbers. 
+
+
+## Definition of Done for Cursor AI Tasks
+
+1. **Unit Tests:**
+   - **Write First:** Write comprehensive unit tests for every new feature *before* writing the implementation.
+   - **Test Coverage:** Ensure all critical paths and edge cases are covered.
+   - **Pass Rate:** Confirm that all unit tests pass without errors.
+
+2. **End-to-End Tests:**
+   - **Implementation:** Write necessary e2e tests for key workflows (e.g., WebSocket interactions, GeoJSON map loading).
+   - **Verification:** Ensure e2e tests pass as part of the CI/CD pipeline.
+
+3. **Code Quality:**
+   - **Linting:** Code must pass all ESLint checks with no warnings or errors.
+   - **Formatting:** Ensure the code adheres to Prettier standards.
+   - **Build Integrity:** Code must compile/build without any errors.
+
+4. **Functional Requirements:**
+   - **Feature Completeness:** The new functionality must fully meet the specifications.
+   - **Backward Compatibility:** Do not change existing tests or functionality unless there's a compelling reason; document any necessary modifications.
+   - **Performance:** Validate that there’s no performance regression.
+
+5. **Documentation & Commits:**
+   - **Inline Comments:** Add clear comments where complex logic is involved.
+   - **AI Context:** Ensure all files include enough context that you and other LLMs can understand what they are for and how they fit together in the larger codebase.
+   - **Documentation Updates:** Update technical documentation as needed.
+   - **Commit Messages:** Use concise, descriptive, and technical commit messages.
+
+
+---
+
+**Checklist for Task Completion:**
+- [ ] Write unit tests first and ensure they pass.
+- [ ] Implement e2e tests and verify their success.
+- [ ] Confirm ESLint and Prettier checks pass.
+- [ ] Ensure the build is error-free.
+- [ ] Verify backward compatibility; do not alter existing tests unless required.
+- [ ] Update documentation and commit messages accordingly.
