@@ -430,7 +430,7 @@ export default function MapCanvas({
 
   // Handle zoom with mouse wheel - reduced sensitivity
   const handleWheel = useCallback(
-    (event: React.WheelEvent<HTMLCanvasElement>) => {
+    (event: WheelEvent) => {
       event.preventDefault();
 
       // Reduce sensitivity by a factor of 3
@@ -491,7 +491,7 @@ export default function MapCanvas({
 
   // Handle touch events for mobile
   const handleTouchMove = useCallback(
-    (event: React.TouchEvent<HTMLCanvasElement>) => {
+    (event: TouchEvent) => {
       // Prevent scrolling while touching the map
       event.preventDefault();
 
@@ -528,7 +528,7 @@ export default function MapCanvas({
   );
 
   const handleTouchStart = useCallback(
-    (event: React.TouchEvent<HTMLCanvasElement>) => {
+    (event: TouchEvent) => {
       if (event.touches.length === 1) {
         const touch = event.touches[0];
         setIsDragging(true);
@@ -541,6 +541,28 @@ export default function MapCanvas({
   const handleTouchEnd = useCallback(() => {
     setIsDragging(false);
   }, []);
+
+  // Add non-passive touch event listeners
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Add touch event listeners with passive: false
+    canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
+    canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+    canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
+
+    // Add wheel event listener with passive: false
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+
+    // Cleanup
+    return () => {
+      canvas.removeEventListener("touchstart", handleTouchStart);
+      canvas.removeEventListener("touchmove", handleTouchMove);
+      canvas.removeEventListener("touchend", handleTouchEnd);
+      canvas.removeEventListener("wheel", handleWheel);
+    };
+  }, [handleTouchStart, handleTouchMove, handleTouchEnd, handleWheel]);
 
   // Handle clicks/touches to select/deselect states
   const handleStateSelect = useCallback(() => {
@@ -577,10 +599,6 @@ export default function MapCanvas({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onClick={handleStateSelect}
-        onWheel={handleWheel}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
         onContextMenu={(e) => e.preventDefault()} // Prevent context menu on right-click
         style={{
           width: "100%",

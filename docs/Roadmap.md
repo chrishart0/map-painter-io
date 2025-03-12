@@ -16,7 +16,7 @@
   - [x] Set up ESLint, Prettier, and Tailwind CSS configurations.
   - [x] Commit the initial project setup.
 
-### User Story 2: Basic Map Rendering
+### ~~User Story 2: Basic Map Rendering~~
 
 - **Title:** Render a simplified GeoJSON map on HTML5 Canvas
 - **Description:** As a player, I want to see a basic map of 12-15 states rendered on an HTML5 Canvas so that I can start interacting with the game.
@@ -25,13 +25,13 @@
   - States are rendered as polygons with a neutral color.
   - Each state is clickable.
 - **Tasks:**
-  - [ ] Add a GeoJSON file into the `public` folder.
-  - [ ] Implement canvas rendering logic to draw the GeoJSON polygons.
-  - [ ] Add click event listeners for each state.
-  - [ ] Verify that the map renders correctly and is interactive.
-  - [ ] Mobile optimized
-  - [ ] Supports scaling
-  - [ ] Supports selecting a state to see details
+  - [x] Add a GeoJSON file into the `public` folder.
+  - [x] Implement canvas rendering logic to draw the GeoJSON polygons.
+  - [x] Add click event listeners for each state.
+  - [x] Verify that the map renders correctly and is interactive.
+  - [x] Mobile optimized
+  - [x] Supports scaling
+  - [x] Supports selecting a state to see details
 
 ---
 
