@@ -7,21 +7,29 @@
  * This hook builds on top of the useSupabaseRealtime hook to provide game-specific functionality.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import {
+  useSupabaseRealtime,
+  MessagePayload,
+} from "../hooks/useSupabaseRealtime";
 import { supabase } from "../supabase";
-import { Player, StateOwnership } from "@/types/game";
+import { Player, StateOwnership, MessageType } from "@/types/game";
 
 interface UseGameRealtimeOptions {
   gameInstanceId: string;
   onMapStateChange?: (mapStates: StateOwnership[]) => void;
   onPlayerChange?: (players: Player[]) => void;
+  onError?: (error: Error) => void;
 }
 
 interface UseGameRealtimeReturn {
   mapStates: StateOwnership[];
   players: Player[];
   isLoading: boolean;
+  isConnected: boolean;
+  connectionStatus: string;
   error: Error | null;
+  sendStateUpdate: (stateId: string, ownerId: string | null) => void;
 }
 
 /**
@@ -31,15 +39,154 @@ export function useGameRealtime({
   gameInstanceId,
   onMapStateChange,
   onPlayerChange,
+  onError,
 }: UseGameRealtimeOptions): UseGameRealtimeReturn {
   const [mapStates, setMapStates] = useState<StateOwnership[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
 
-  /**
-   * Fetch initial data and set up real-time subscriptions
-   */
+  // Handle incoming messages
+  const handleMessage = useCallback(
+    (eventType: string, payload: MessagePayload) => {
+      console.log(`Game realtime message received: ${eventType}`, payload);
+
+      switch (eventType) {
+        case MessageType.STATE_CLAIMED:
+        case MessageType.STATE_ATTACKED:
+          if (payload.stateId && payload.playerId) {
+            // Update map state when a state is claimed or attacked
+            setMapStates((prevStates) => {
+              const updatedStates = prevStates.map((state) => {
+                if (state.stateId === payload.stateId) {
+                  // Only update if attack was successful or it's a claim
+                  if (
+                    eventType === MessageType.STATE_CLAIMED ||
+                    payload.success
+                  ) {
+                    return {
+                      ...state,
+                      ownerId: payload.playerId as string,
+                      capturedAt: Date.now(),
+                    };
+                  }
+                }
+                return state;
+              });
+
+              onMapStateChange?.(updatedStates);
+              return updatedStates;
+            });
+          }
+          break;
+
+        case MessageType.PLAYER_JOINED:
+          if (payload.player) {
+            // Add new player
+            setPlayers((prevPlayers) => {
+              const player = payload.player as Player;
+              // Check if player already exists
+              if (prevPlayers.some((p) => p.id === player.id)) {
+                return prevPlayers;
+              }
+
+              const updatedPlayers = [...prevPlayers, player];
+              onPlayerChange?.(updatedPlayers);
+              return updatedPlayers;
+            });
+          }
+          break;
+
+        case MessageType.PLAYER_LEFT:
+          if (payload.playerId) {
+            // Remove player
+            setPlayers((prevPlayers) => {
+              const updatedPlayers = prevPlayers.filter(
+                (p) => p.id !== payload.playerId,
+              );
+              onPlayerChange?.(updatedPlayers);
+              return updatedPlayers;
+            });
+          }
+          break;
+
+        case MessageType.RESOURCES_UPDATED:
+          if (payload.playerId && payload.resources) {
+            // Update player resources
+            setPlayers((prevPlayers) => {
+              const updatedPlayers = prevPlayers.map((player) => {
+                if (player.id === payload.playerId) {
+                  return {
+                    ...player,
+                    resources: payload.resources as number,
+                    lastActiveAt: Date.now(),
+                  };
+                }
+                return player;
+              });
+
+              onPlayerChange?.(updatedPlayers);
+              return updatedPlayers;
+            });
+          }
+          break;
+
+        default:
+          break;
+      }
+    },
+    [onMapStateChange, onPlayerChange],
+  );
+
+  // Handle errors
+  const handleError = useCallback(
+    (err: Error) => {
+      console.error("Game realtime error:", err);
+      setError(err);
+      onError?.(err);
+    },
+    [onError],
+  );
+
+  // Initialize Supabase Realtime
+  const { isConnected, connectionStatus, sendMessage, leaveChannel } =
+    useSupabaseRealtime({
+      channelName: `game-${gameInstanceId}`,
+      eventTypes: [
+        MessageType.STATE_CLAIMED,
+        MessageType.STATE_ATTACKED,
+        MessageType.PLAYER_JOINED,
+        MessageType.PLAYER_LEFT,
+        MessageType.RESOURCES_UPDATED,
+      ],
+      onMessage: handleMessage,
+      onError: handleError,
+      autoJoin: true,
+    });
+
+  // Send a state update
+  const sendStateUpdate = useCallback(
+    (stateId: string, ownerId: string | null) => {
+      if (!isConnected) {
+        setError(new Error("Cannot update state: not connected"));
+        return;
+      }
+
+      if (ownerId) {
+        // Send state claimed message
+        sendMessage(MessageType.STATE_CLAIMED, {
+          stateId,
+          playerId: ownerId,
+        });
+      } else {
+        // Reset state to neutral (not implemented in the current protocol)
+        console.warn("Resetting state to neutral is not implemented");
+      }
+    },
+    [isConnected, sendMessage],
+  );
+
+  // Fetch initial data
   useEffect(() => {
     if (!gameInstanceId) {
       setError(new Error("Game instance ID is required"));
@@ -50,139 +197,54 @@ export function useGameRealtime({
     setIsLoading(true);
     setError(null);
 
-    // Fetch initial map states
-    const fetchMapStates = async () => {
+    // Fetch game instance data
+    const fetchGameData = async () => {
       try {
         const { data, error } = await supabase
-          .from("map_states")
+          .from("game_instances")
           .select("*")
-          .eq("game_instance_id", gameInstanceId);
+          .eq("id", gameInstanceId)
+          .single();
 
         if (error) {
           throw error;
         }
 
-        const stateOwnerships = data.map((state) => ({
-          stateId: state.state_id,
-          ownerId: state.owner_id,
-          capturedAt: new Date(state.captured_at).getTime(),
-        }));
+        if (data) {
+          // Set map states
+          setMapStates(data.states || []);
+          onMapStateChange?.(data.states || []);
 
-        setMapStates(stateOwnerships);
-        onMapStateChange?.(stateOwnerships);
-      } catch (err) {
-        console.error("Error fetching map states:", err);
-        setError(
-          err instanceof Error ? err : new Error("Failed to fetch map states"),
-        );
-      }
-    };
-
-    // Fetch initial players
-    const fetchPlayers = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("players")
-          .select("*")
-          .eq("game_instance_id", gameInstanceId);
-
-        if (error) {
-          throw error;
+          // Set players
+          setPlayers(data.players || []);
+          onPlayerChange?.(data.players || []);
         }
 
-        const playersList = data.map((player) => ({
-          id: player.id,
-          name: player.name,
-          color: player.color,
-          resources: player.resources,
-          connectedAt: new Date(player.connected_at).getTime(),
-          lastActiveAt: new Date(player.last_active_at).getTime(),
-        }));
-
-        setPlayers(playersList);
-        onPlayerChange?.(playersList);
-      } catch (err) {
-        console.error("Error fetching players:", err);
-        setError(
-          err instanceof Error ? err : new Error("Failed to fetch players"),
-        );
-      }
-    };
-
-    // Set up real-time subscriptions
-    const setupSubscriptions = async () => {
-      try {
-        // Subscribe to map_states changes
-        const mapStatesSubscription = supabase
-          .channel(`map-states-${gameInstanceId}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              schema: "public",
-              table: "map_states",
-              filter: `game_instance_id=eq.${gameInstanceId}`,
-            },
-            async (payload) => {
-              console.log("Map state change:", payload);
-              // Refresh all map states when any change occurs
-              await fetchMapStates();
-            },
-          )
-          .subscribe();
-
-        // Subscribe to players changes
-        const playersSubscription = supabase
-          .channel(`players-${gameInstanceId}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              schema: "public",
-              table: "players",
-              filter: `game_instance_id=eq.${gameInstanceId}`,
-            },
-            async (payload) => {
-              console.log("Player change:", payload);
-              // Refresh all players when any change occurs
-              await fetchPlayers();
-            },
-          )
-          .subscribe();
-
-        // Fetch initial data
-        await Promise.all([fetchMapStates(), fetchPlayers()]);
         setIsLoading(false);
-
-        // Cleanup function
-        return () => {
-          mapStatesSubscription.unsubscribe();
-          playersSubscription.unsubscribe();
-        };
       } catch (err) {
-        console.error("Error setting up subscriptions:", err);
+        console.error("Error fetching game data:", err);
         setError(
-          err instanceof Error
-            ? err
-            : new Error("Failed to set up subscriptions"),
+          err instanceof Error ? err : new Error("Failed to fetch game data"),
         );
         setIsLoading(false);
       }
     };
 
-    // Start the setup process
-    const cleanup = setupSubscriptions();
+    fetchGameData();
 
-    // Cleanup on unmount
+    // Clean up on unmount
     return () => {
-      cleanup.then((cleanupFn) => cleanupFn?.());
+      leaveChannel();
     };
-  }, [gameInstanceId, onMapStateChange, onPlayerChange]);
+  }, [gameInstanceId, leaveChannel, onMapStateChange, onPlayerChange]);
 
   return {
     mapStates,
     players,
     isLoading,
+    isConnected,
+    connectionStatus,
     error,
+    sendStateUpdate,
   };
 }

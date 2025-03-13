@@ -10,7 +10,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { RealtimeChannel, RealtimePresenceState } from "@supabase/supabase-js";
 import { supabase } from "../supabase";
-import { GameMessage, Player } from "@/types/game";
 
 // Enum for subscription states from Supabase Realtime
 enum REALTIME_SUBSCRIBE_STATES {
@@ -21,19 +20,25 @@ enum REALTIME_SUBSCRIBE_STATES {
 }
 
 // Interface for presence payload
-interface PresencePayload {
-  player?: Player;
+export interface PresencePayload {
   [key: string]: unknown;
 }
 
 // Message payload type
-type MessagePayload = Record<string, unknown>;
+export type MessagePayload = Record<string, unknown>;
+
+// Reconnection configuration
+const RECONNECT_INITIAL_DELAY = 1000; // 1 second
+const RECONNECT_MAX_DELAY = 30000; // 30 seconds
+const RECONNECT_MAX_ATTEMPTS = 10;
 
 interface UseSupabaseRealtimeOptions {
   channelName: string;
   eventTypes?: string[];
-  onMessage?: (message: GameMessage) => void;
+  onMessage?: (eventType: string, message: MessagePayload) => void;
   onPresenceSync?: (state: RealtimePresenceState) => void;
+  onError?: (error: Error) => void;
+  onStatusChange?: (status: string) => void;
   autoJoin?: boolean;
 }
 
@@ -50,6 +55,7 @@ interface UseSupabaseRealtimeReturn {
   leaveChannel: () => void;
   trackPresence: (presenceData: PresencePayload) => void;
   updatePresence: (presenceData: PresencePayload) => void;
+  connectionStatus: string;
 }
 
 /**
@@ -60,15 +66,32 @@ export function useSupabaseRealtime({
   eventTypes = ["message"],
   onMessage,
   onPresenceSync,
+  onError,
+  onStatusChange,
   autoJoin = true,
 }: UseSupabaseRealtimeOptions): UseSupabaseRealtimeReturn {
   // State and refs
   const channelRef = useRef<RealtimeChannel | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] =
+    useState<string>("DISCONNECTED");
   const [presenceState, setPresenceState] =
     useState<RealtimePresenceState | null>(null);
   const messageQueue = useRef<QueuedMessage[]>([]);
   const channelNameRef = useRef<string>(channelName);
+  const reconnectAttempts = useRef<number>(0);
+  const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  /**
+   * Update connection status and notify via callback
+   */
+  const updateConnectionStatus = useCallback(
+    (status: string) => {
+      setConnectionStatus(status);
+      onStatusChange?.(status);
+    },
+    [onStatusChange],
+  );
 
   /**
    * Process any messages that were queued while disconnected
@@ -99,155 +122,176 @@ export function useSupabaseRealtime({
         console.error("Error unsubscribing:", error);
       }
       channelRef.current = null;
-      setIsConnected(false);
     }
-  }, []);
+    setIsConnected(false);
+    updateConnectionStatus("DISCONNECTED");
+  }, [updateConnectionStatus]);
 
   /**
-   * Create a new Supabase Realtime channel with appropriate event handlers
+   * Calculate reconnection delay with exponential backoff
    */
-  const createChannel = useCallback(
-    (name: string) => {
-      console.log(`Creating channel: ${name}`);
+  const getReconnectDelay = useCallback(() => {
+    const attempt = reconnectAttempts.current;
+    // Exponential backoff: 2^attempt * initial delay, capped at max delay
+    return Math.min(
+      RECONNECT_INITIAL_DELAY * Math.pow(2, attempt),
+      RECONNECT_MAX_DELAY,
+    );
+  }, []);
 
-      // Clean up existing channel first
-      cleanupChannel();
+  // Forward declaration for circular dependency
+  const attemptReconnectRef = useRef<() => void>(() => {});
+  const joinChannelRef = useRef<() => Promise<void>>(async () => {});
 
+  /**
+   * Attempt to reconnect to the channel with exponential backoff
+   */
+  const attemptReconnect = useCallback(() => {
+    if (reconnectAttempts.current >= RECONNECT_MAX_ATTEMPTS) {
+      console.error(
+        `Max reconnection attempts (${RECONNECT_MAX_ATTEMPTS}) reached`,
+      );
+      updateConnectionStatus("MAX_RETRIES_EXCEEDED");
+      onError?.(
+        new Error(
+          `Failed to reconnect after ${RECONNECT_MAX_ATTEMPTS} attempts`,
+        ),
+      );
+      return;
+    }
+
+    const delay = getReconnectDelay();
+    console.log(
+      `Attempting to reconnect in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${RECONNECT_MAX_ATTEMPTS})`,
+    );
+    updateConnectionStatus(
+      `RECONNECTING (${reconnectAttempts.current + 1}/${RECONNECT_MAX_ATTEMPTS})`,
+    );
+
+    // Clear any existing timeout
+    if (reconnectTimeout.current) {
+      clearTimeout(reconnectTimeout.current);
+    }
+
+    // Set a new timeout for reconnection
+    reconnectTimeout.current = setTimeout(() => {
+      reconnectAttempts.current += 1;
+      joinChannelRef.current().catch((error: unknown) => {
+        console.error("Reconnection attempt failed:", error);
+        attemptReconnectRef.current();
+      });
+    }, delay);
+  }, [getReconnectDelay, onError, updateConnectionStatus]);
+
+  // Set the ref to the actual function
+  attemptReconnectRef.current = attemptReconnect;
+
+  /**
+   * Join the Supabase Realtime channel
+   */
+  const joinChannel = useCallback(async (): Promise<void> => {
+    // Clean up any existing channel
+    cleanupChannel();
+
+    updateConnectionStatus("CONNECTING");
+    console.log(`Joining channel: ${channelNameRef.current}`);
+
+    try {
       // Create a new channel
-      const newChannel = supabase.channel(name, {
+      const channel = supabase.channel(channelNameRef.current, {
         config: {
           broadcast: { self: true },
-          presence: { key: "game-presence" },
+          presence: { key: "" },
         },
       });
+      channelRef.current = channel;
 
-      // Set up broadcast event listeners for each event type
+      // Set up event listeners for each event type
       eventTypes.forEach((eventType) => {
-        newChannel.on("broadcast", { event: eventType }, (payload) => {
+        channel.on("broadcast", { event: eventType }, (payload) => {
           console.log(`Received ${eventType} message:`, payload);
-          onMessage?.(payload.payload as GameMessage);
+          onMessage?.(eventType, payload.payload as MessagePayload);
         });
       });
 
-      // Set up presence event listener
-      newChannel.on("presence", { event: "sync" }, () => {
-        const state = newChannel.presenceState();
-        console.log("Presence sync:", state);
+      // Set up presence listeners
+      channel.on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState();
+        console.log("Presence state updated:", state);
         setPresenceState(state);
         onPresenceSync?.(state);
       });
 
-      // Set up system event listeners for connection status
-      newChannel.on("system", { event: "*" }, (status) => {
-        console.log("Realtime system event:", status);
-        if (status.event === "connected") {
-          setIsConnected(true);
+      // Set up system event listeners
+      channel.on("system", { event: "*" }, (payload) => {
+        console.log("System event:", payload);
+      });
 
-          // Process any queued messages
-          processQueuedMessages(newChannel);
-        } else if (status.event === "disconnected") {
+      // Subscribe to the channel
+      await channel.subscribe((status) => {
+        console.log(`Channel status: ${status}`);
+
+        if (status === REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) {
+          console.log(
+            `Successfully subscribed to channel: ${channelNameRef.current}`,
+          );
+          setIsConnected(true);
+          updateConnectionStatus("CONNECTED");
+          reconnectAttempts.current = 0; // Reset reconnect attempts on successful connection
+          processQueuedMessages(channel);
+        } else if (
+          status === REALTIME_SUBSCRIBE_STATES.TIMED_OUT ||
+          status === REALTIME_SUBSCRIBE_STATES.CLOSED ||
+          status === REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR
+        ) {
+          console.error(`Channel subscription failed with status: ${status}`);
           setIsConnected(false);
+          updateConnectionStatus(`ERROR: ${status}`);
+          attemptReconnect();
         }
       });
 
-      // Store the channel reference
-      channelRef.current = newChannel;
-      return newChannel;
-    },
-    [
-      eventTypes,
-      onMessage,
-      onPresenceSync,
-      cleanupChannel,
-      processQueuedMessages,
-    ],
-  );
-
-  /**
-   * Join the channel and return a promise that resolves when connected
-   */
-  const joinChannel = useCallback(async () => {
-    // Create the channel if it doesn't exist
-    if (!channelRef.current) {
-      console.log(
-        `No channel exists, creating channel: ${channelNameRef.current}`,
-      );
-      createChannel(channelNameRef.current);
-    }
-
-    if (!channelRef.current) {
-      console.error("Failed to create channel");
-      throw new Error("Failed to create channel");
-    }
-
-    console.log(`Joining channel: ${channelNameRef.current}`);
-
-    // Return a promise that resolves when subscription is successful
-    return new Promise<void>((resolve, reject) => {
-      try {
-        channelRef.current!.subscribe((status) => {
-          console.log("Join subscription status:", status);
-          if (status === REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) {
-            console.log("Successfully subscribed to channel");
-            setIsConnected(true);
-            resolve();
-          } else if (
-            status === REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR ||
-            status === REALTIME_SUBSCRIBE_STATES.CLOSED ||
-            status === REALTIME_SUBSCRIBE_STATES.TIMED_OUT
-          ) {
-            console.error("Failed to subscribe to channel:", status);
-            setIsConnected(false);
-            reject(new Error(`Failed to subscribe to channel: ${status}`));
-          }
-        });
-      } catch (error) {
-        console.error("Error during subscribe:", error);
-        reject(error);
-      }
-    });
-  }, [createChannel]);
-
-  /**
-   * Handle channel changes when channelName prop changes
-   */
-  useEffect(() => {
-    // Skip if nothing changed
-    if (channelNameRef.current === channelName) {
       return;
+    } catch (error: unknown) {
+      console.error("Error joining channel:", error);
+      setIsConnected(false);
+      updateConnectionStatus("ERROR");
+      onError?.(
+        error instanceof Error ? error : new Error("Failed to join channel"),
+      );
+      attemptReconnect();
+      throw error;
     }
+  }, [
+    cleanupChannel,
+    eventTypes,
+    onMessage,
+    onPresenceSync,
+    onError,
+    processQueuedMessages,
+    updateConnectionStatus,
+    attemptReconnect,
+  ]);
 
-    // Update the ref and create a new channel
-    channelNameRef.current = channelName;
-    console.log(`Channel name changed to: ${channelName}`);
-    createChannel(channelName);
-
-    // Auto-join if enabled
-    if (autoJoin) {
-      console.log(`Auto-joining channel: ${channelName}`);
-      // Use setTimeout to avoid dependency cycle with joinChannel
-      setTimeout(() => {
-        joinChannel().catch((error) => {
-          console.error(`Error auto-joining channel: ${error.message}`);
-        });
-      }, 0);
-    }
-
-    // Cleanup on unmount or when channelName changes
-    return () => {
-      cleanupChannel();
-    };
-  }, [channelName, autoJoin, createChannel, cleanupChannel, joinChannel]);
+  // Set the ref to the actual function
+  joinChannelRef.current = joinChannel;
 
   /**
-   * Leave the channel, cleaning up resources
+   * Leave the Supabase Realtime channel
    */
   const leaveChannel = useCallback(() => {
+    // Clear any reconnection timeout
+    if (reconnectTimeout.current) {
+      clearTimeout(reconnectTimeout.current);
+      reconnectTimeout.current = null;
+    }
+
     cleanupChannel();
+    reconnectAttempts.current = 0; // Reset reconnect attempts
   }, [cleanupChannel]);
 
   /**
-   * Send a message to the channel, or queue it if not connected
+   * Send a message through the Supabase Realtime channel
    */
   const sendMessage = useCallback(
     (eventType: string, message: MessagePayload) => {
@@ -259,18 +303,25 @@ export function useSupabaseRealtime({
           payload: message,
         });
       } else {
-        console.warn(
-          "Cannot send message, not connected to channel. Queueing message.",
-        );
-        // Queue the message to be sent when connection is established
+        console.log(`Queueing ${eventType} message (not connected):`, message);
         messageQueue.current.push({ eventType, message });
+
+        // If we're not connected and not already attempting to reconnect, try to connect
+        if (!isConnected && reconnectAttempts.current === 0) {
+          joinChannel().catch((error: unknown) => {
+            console.error(
+              "Error joining channel while sending message:",
+              error,
+            );
+          });
+        }
       }
     },
-    [isConnected],
+    [isConnected, joinChannel],
   );
 
   /**
-   * Track user presence in the channel
+   * Track presence data in the channel
    */
   const trackPresence = useCallback(
     (presenceData: PresencePayload) => {
@@ -278,14 +329,14 @@ export function useSupabaseRealtime({
         console.log("Tracking presence:", presenceData);
         channelRef.current.track(presenceData);
       } else {
-        console.warn("Cannot track presence, not connected to channel");
+        console.warn("Cannot track presence, channel not connected");
       }
     },
     [isConnected],
   );
 
   /**
-   * Update presence data for the current user
+   * Update presence data in the channel
    */
   const updatePresence = useCallback(
     (presenceData: PresencePayload) => {
@@ -293,11 +344,38 @@ export function useSupabaseRealtime({
         console.log("Updating presence:", presenceData);
         channelRef.current.track(presenceData);
       } else {
-        console.warn("Cannot update presence, not connected to channel");
+        console.warn("Cannot update presence, channel not connected");
       }
     },
     [isConnected],
   );
+
+  // Auto-join on mount if autoJoin is true
+  useEffect(() => {
+    if (autoJoin) {
+      joinChannel().catch((error: unknown) => {
+        console.error("Error during auto-join:", error);
+      });
+    }
+
+    // Clean up on unmount
+    return () => {
+      leaveChannel();
+    };
+  }, [autoJoin, joinChannel, leaveChannel]);
+
+  // Update channel name if it changes
+  useEffect(() => {
+    if (channelName !== channelNameRef.current) {
+      channelNameRef.current = channelName;
+      if (isConnected) {
+        // Rejoin with new channel name
+        joinChannel().catch((error: unknown) => {
+          console.error("Error rejoining with new channel name:", error);
+        });
+      }
+    }
+  }, [channelName, isConnected, joinChannel]);
 
   return {
     isConnected,
@@ -307,5 +385,6 @@ export function useSupabaseRealtime({
     leaveChannel,
     trackPresence,
     updatePresence,
+    connectionStatus,
   };
 }

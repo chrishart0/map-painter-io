@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { useGameRealtime } from "@/lib/contexts/GameRealtimeContext";
+import { useGameRealtimeContext } from "@/lib/contexts/GameRealtimeContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -21,7 +21,7 @@ export function GameStatus() {
     claimState,
     attackState,
     connectionError,
-  } = useGameRealtime();
+  } = useGameRealtimeContext();
 
   const [gameId, setGameId] = useState("default-game");
   const [playerName, setPlayerName] = useState("");
@@ -138,7 +138,7 @@ export function GameStatus() {
           <p className="text-sm">
             Game:{" "}
             <span className="font-semibold">
-              {gameInstance?.name || "Unknown"}
+              {gameInstance?.id || "Unknown"}
             </span>
           </p>
           <p className="text-sm">

@@ -21,16 +21,15 @@ export interface StateOwnership {
   stateId: string;
   ownerId: string | null; // null means neutral
   capturedAt: number;
+  neighbors?: string[]; // IDs of neighboring states
 }
 
 // Game instance
 export interface GameInstance {
   id: string;
-  name: string;
   createdAt: number;
-  players: Record<string, Player>;
-  stateOwnerships: Record<string, StateOwnership>;
-  lastResourceUpdate: number;
+  states: StateOwnership[];
+  players: Player[];
 }
 
 // WebSocket message types
@@ -54,7 +53,7 @@ export enum MessageType {
 // Base WebSocket message
 export interface WebSocketMessage {
   type: MessageType;
-  gameId: string;
+  gameId?: string;
 }
 
 // Client -> Server Messages
@@ -72,13 +71,19 @@ export interface ClaimStateMessage extends WebSocketMessage {
   type: MessageType.CLAIM_STATE;
   playerId: string;
   stateId: string;
+  cost?: number;
 }
 
 export interface AttackStateMessage extends WebSocketMessage {
   type: MessageType.ATTACK_STATE;
   playerId: string;
   stateId: string;
-  extraResources: number;
+  targetPlayerId?: string;
+  cost?: number;
+  attackStrength?: number;
+  defenseStrength?: number;
+  success?: boolean;
+  extraResources?: number;
 }
 
 // Server -> Client Messages
@@ -107,14 +112,15 @@ export interface StateClaimedMessage extends WebSocketMessage {
 export interface StateAttackedMessage extends WebSocketMessage {
   type: MessageType.STATE_ATTACKED;
   stateId: string;
-  attackerId: string;
-  defenderId: string | null;
+  playerId: string;
+  targetPlayerId: string;
   success: boolean;
 }
 
 export interface ResourcesUpdatedMessage extends WebSocketMessage {
   type: MessageType.RESOURCES_UPDATED;
-  playerResources: Record<string, number>;
+  playerId: string;
+  resources: number;
 }
 
 export interface ErrorMessage extends WebSocketMessage {

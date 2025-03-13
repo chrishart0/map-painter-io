@@ -1,5 +1,5 @@
 ---
-description: Tools and technical specs for the repo
+description: Tools and technical specs for the repo, use this when trying to get an understanding of the codebase
 globs: 
 alwaysApply: false
 ---

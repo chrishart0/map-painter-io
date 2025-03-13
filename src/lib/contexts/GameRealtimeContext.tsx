@@ -21,15 +21,23 @@ import React, {
   useEffect,
 } from "react";
 import { RealtimePresenceState } from "@supabase/supabase-js";
-import { useSupabaseRealtime } from "../hooks/useSupabaseRealtime";
-import { GameMessage, MessageType, Player, GameInstance } from "@/types/game";
+import {
+  useSupabaseRealtime,
+  PresencePayload,
+  MessagePayload,
+} from "../hooks/useSupabaseRealtime";
+import {
+  MessageType,
+  Player,
+  GameInstance,
+  StateOwnership,
+} from "@/types/game";
 import { v4 as uuidv4 } from "uuid";
 import { supabase } from "@/lib/supabase";
 
-// Interface for presence payload
-interface PresencePayload {
+// Extended presence payload with player information
+interface GamePresencePayload extends PresencePayload {
   player?: Player;
-  [key: string]: unknown;
 }
 
 // Event types for the game
@@ -40,6 +48,7 @@ const GAME_EVENT_TYPES = [
   MessageType.STATE_CLAIMED,
   MessageType.STATE_ATTACKED,
   MessageType.RESOURCES_UPDATED,
+  MessageType.ERROR,
 ];
 
 // Costs for game actions
@@ -48,20 +57,17 @@ const ACTION_COSTS = {
   ATTACK_STATE_BASE: 10,
 };
 
-// Connection timeout in milliseconds
-const CONNECTION_TIMEOUT = 10000;
-
 // Context type definition
 interface GameRealtimeContextType {
   isConnected: boolean;
   currentPlayer: Player | null;
   gameInstance: GameInstance | null;
   onlinePlayers: Player[];
-  sendGameMessage: (message: GameMessage) => void;
-  joinGame: (gameId: string, playerName: string) => Promise<void>;
-  leaveGame: () => void;
   claimState: (stateId: string) => void;
   attackState: (stateId: string, extraResources: number) => void;
+  joinGame: (gameId: string, playerName: string) => Promise<void>;
+  leaveGame: () => void;
+  connectionStatus: string;
   connectionError: string | null;
 }
 
@@ -98,129 +104,18 @@ export const GameRealtimeProvider: React.FC<GameRealtimeProviderProps> = ({
   }, [connectionError]);
 
   /**
-   * Process incoming game messages and update state accordingly
-   */
-  const handleGameMessage = useCallback((message: GameMessage) => {
-    console.log("Received game message:", message);
-
-    switch (message.type) {
-      case MessageType.GAME_STATE:
-        // Update the entire game state
-        setGameInstance(message.instance);
-        break;
-
-      case MessageType.PLAYER_JOINED:
-        // Add the new player to the game state
-        setGameInstance((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            players: {
-              ...prev.players,
-              [message.player.id]: message.player,
-            },
-          };
-        });
-        break;
-
-      case MessageType.PLAYER_LEFT:
-        // Remove the player from the game state
-        setGameInstance((prev) => {
-          if (!prev) return prev;
-          const newPlayers = { ...prev.players };
-          delete newPlayers[message.playerId];
-          return {
-            ...prev,
-            players: newPlayers,
-          };
-        });
-        break;
-
-      case MessageType.STATE_CLAIMED:
-        // Update the state ownership
-        setGameInstance((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            stateOwnerships: {
-              ...prev.stateOwnerships,
-              [message.stateId]: {
-                stateId: message.stateId,
-                ownerId: message.playerId,
-                capturedAt: Date.now(),
-              },
-            },
-          };
-        });
-        break;
-
-      case MessageType.STATE_ATTACKED:
-        // Update the state ownership if attack was successful
-        if (message.success) {
-          setGameInstance((prev) => {
-            if (!prev) return prev;
-            return {
-              ...prev,
-              stateOwnerships: {
-                ...prev.stateOwnerships,
-                [message.stateId]: {
-                  stateId: message.stateId,
-                  ownerId: message.attackerId,
-                  capturedAt: Date.now(),
-                },
-              },
-            };
-          });
-        }
-        break;
-
-      case MessageType.RESOURCES_UPDATED:
-        // Update player resources
-        setGameInstance((prev) => {
-          if (!prev) return prev;
-
-          const updatedPlayers = { ...prev.players };
-
-          // Update resources for each player
-          Object.keys(message.playerResources).forEach((playerId) => {
-            if (updatedPlayers[playerId]) {
-              updatedPlayers[playerId] = {
-                ...updatedPlayers[playerId],
-                resources: message.playerResources[playerId],
-              };
-            }
-          });
-
-          return {
-            ...prev,
-            players: updatedPlayers,
-            lastResourceUpdate: Date.now(),
-          };
-        });
-        break;
-
-      case MessageType.ERROR:
-        console.error("Game error:", message.message);
-        setConnectionError(message.message);
-        break;
-
-      default:
-        console.warn("Unknown message type:", message.type);
-    }
-  }, []);
-
-  /**
-   * Update online players list when presence state changes
+   * Handle presence state changes
    */
   const handlePresenceSync = useCallback((state: RealtimePresenceState) => {
-    // Extract player information from presence state
+    // Extract players from presence state
     const players: Player[] = [];
 
-    Object.keys(state).forEach((key) => {
-      const presenceArray = state[key] as PresencePayload[];
-      presenceArray.forEach((presence) => {
-        if (presence.player) {
-          players.push(presence.player);
+    Object.values(state).forEach((presences) => {
+      presences.forEach((presence) => {
+        // Cast to our extended presence payload type
+        const gamePresence = presence as unknown as GamePresencePayload;
+        if (gamePresence.player) {
+          players.push(gamePresence.player);
         }
       });
     });
@@ -228,106 +123,258 @@ export const GameRealtimeProvider: React.FC<GameRealtimeProviderProps> = ({
     setOnlinePlayers(players);
   }, []);
 
-  // Initialize Supabase Realtime hook
-  const { isConnected, sendMessage, joinChannel, leaveChannel, trackPresence } =
-    useSupabaseRealtime({
-      channelName: gameId || "lobby",
-      eventTypes: GAME_EVENT_TYPES,
-      onMessage: handleGameMessage,
-      onPresenceSync: handlePresenceSync,
-      autoJoin: false, // We'll join manually when a user wants to join a game
-    });
+  /**
+   * Handle incoming messages
+   */
+  const handleMessage = useCallback(
+    (eventType: string, payload: MessagePayload) => {
+      console.log(`Received ${eventType} message:`, payload);
+
+      switch (eventType) {
+        case MessageType.GAME_STATE:
+          // Update game state
+          setGameInstance(payload as unknown as GameInstance);
+          break;
+
+        case MessageType.PLAYER_JOINED:
+          // Handle player joined
+          if (payload.player) {
+            setOnlinePlayers((prev) => {
+              // Check if player already exists
+              const exists = prev.some(
+                (p) => p.id === (payload.player as Player).id,
+              );
+              if (exists) {
+                return prev;
+              }
+              return [...prev, payload.player as Player];
+            });
+          }
+          break;
+
+        case MessageType.PLAYER_LEFT:
+          // Handle player left
+          if (payload.playerId) {
+            setOnlinePlayers((prev) =>
+              prev.filter((p) => p.id !== payload.playerId),
+            );
+          }
+          break;
+
+        case MessageType.STATE_CLAIMED:
+          // Handle state claimed
+          if (gameInstance && payload.stateId && payload.playerId) {
+            setGameInstance((prev) => {
+              if (!prev) return prev;
+
+              // Update state ownership
+              const updatedStates = prev.states.map((state: StateOwnership) => {
+                if (state.stateId === payload.stateId) {
+                  return {
+                    ...state,
+                    ownerId: payload.playerId as string,
+                    capturedAt: Date.now(),
+                  };
+                }
+                return state;
+              });
+
+              return {
+                ...prev,
+                states: updatedStates,
+              };
+            });
+          }
+          break;
+
+        case MessageType.STATE_ATTACKED:
+          // Handle state attacked
+          if (
+            gameInstance &&
+            payload.stateId &&
+            payload.playerId &&
+            payload.success
+          ) {
+            setGameInstance((prev) => {
+              if (!prev) return prev;
+
+              // Update state ownership if attack was successful
+              const updatedStates = prev.states.map((state: StateOwnership) => {
+                if (state.stateId === payload.stateId && payload.success) {
+                  return {
+                    ...state,
+                    ownerId: payload.playerId as string,
+                    capturedAt: Date.now(),
+                  };
+                }
+                return state;
+              });
+
+              return {
+                ...prev,
+                states: updatedStates,
+              };
+            });
+          }
+          break;
+
+        case MessageType.RESOURCES_UPDATED:
+          // Handle resources updated
+          if (
+            currentPlayer &&
+            payload.resources &&
+            payload.playerId === currentPlayer.id
+          ) {
+            setCurrentPlayer((prev) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                resources: payload.resources as number,
+              };
+            });
+          }
+          break;
+
+        case MessageType.ERROR:
+          // Handle error message
+          setConnectionError((payload.message as string) || "Unknown error");
+          break;
+
+        default:
+          console.warn("Unknown message type:", eventType);
+      }
+    },
+    [gameInstance, currentPlayer],
+  );
 
   /**
-   * Join a game with the given ID and player name
+   * Handle connection status changes
+   */
+  const handleStatusChange = useCallback((status: string) => {
+    console.log(`Connection status changed: ${status}`);
+
+    if (status.startsWith("ERROR")) {
+      setConnectionError(`Connection error: ${status}`);
+    }
+  }, []);
+
+  /**
+   * Handle connection errors
+   */
+  const handleError = useCallback((error: Error) => {
+    console.error("Realtime connection error:", error);
+    setConnectionError(error.message);
+  }, []);
+
+  // Initialize Supabase Realtime hook
+  const {
+    isConnected,
+    connectionStatus,
+    sendMessage,
+    joinChannel,
+    leaveChannel,
+    trackPresence,
+  } = useSupabaseRealtime({
+    channelName: gameId ? `game-${gameId}` : "lobby",
+    eventTypes: GAME_EVENT_TYPES,
+    onMessage: handleMessage,
+    onPresenceSync: handlePresenceSync,
+    onStatusChange: handleStatusChange,
+    onError: handleError,
+    autoJoin: false, // We'll join manually when a game is selected
+  });
+
+  /**
+   * Join a game
    */
   const joinGame = useCallback(
-    async (newGameId: string, playerName: string) => {
-      console.log(`Joining game: ${newGameId} as ${playerName}`);
-
-      // Don't allow joining if already in the process
-      if (isJoining) {
-        console.warn("Already joining a game, please wait");
-        return Promise.reject(new Error("Already joining a game"));
-      }
-
-      setIsJoining(true);
-      setConnectionError(null);
+    async (gameId: string, playerName: string) => {
+      if (isJoining) return;
 
       try {
-        // Verify Supabase is available
-        await supabase.auth.getSession();
-        console.log("Supabase connection verified");
+        setIsJoining(true);
+        setGameId(gameId);
 
-        // Generate a player ID
+        // Create a new player
         const playerId = uuidv4();
-
-        // Create player object
         const player: Player = {
           id: playerId,
-          name: playerName || `Player ${playerId.substring(0, 4)}`,
-          color: `#${Math.floor(Math.random() * 16777215)
-            .toString(16)
-            .padStart(6, "0")}`,
-          resources: 10, // Initial resources
+          name: playerName,
+          color: getRandomColor(),
+          resources: 10, // Starting resources
           connectedAt: Date.now(),
           lastActiveAt: Date.now(),
         };
 
-        // Set current player and game ID
         setCurrentPlayer(player);
-        setGameId(newGameId);
 
-        // Let the hook be updated with the new channel
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        // Join the channel
+        await joinChannel();
 
-        // Join the channel and wait for connection
-        console.log("Joining channel...");
+        // Track presence with player data
+        trackPresence({ player });
 
-        try {
-          // Wait with a timeout to prevent infinite waiting
-          const timeoutPromise = new Promise<void>((_, reject) => {
-            setTimeout(
-              () => reject(new Error("Connection timeout")),
-              CONNECTION_TIMEOUT,
-            );
-          });
+        // Send join message
+        sendMessage(MessageType.PLAYER_JOINED, { player });
 
-          // Try to join with a timeout
-          await Promise.race([joinChannel(), timeoutPromise]);
+        // Fetch game state from database
+        const { data, error } = await supabase
+          .from("game_instances")
+          .select("*")
+          .eq("id", gameId)
+          .single();
 
-          console.log(
-            "Channel connected, tracking presence and sending join message",
-          );
-
-          // Track player presence
-          trackPresence({ player });
-
-          // Send join message
-          sendMessage(MessageType.PLAYER_JOINED, {
-            type: MessageType.PLAYER_JOINED,
-            gameId: newGameId,
-            player,
-            timestamp: Date.now(),
-          });
-
-          return Promise.resolve();
-        } catch (error) {
-          console.error("Error joining channel:", error);
-          throw error; // Re-throw to be caught by the outer try-catch
+        if (error) {
+          throw new Error(`Failed to fetch game: ${error.message}`);
         }
+
+        if (!data) {
+          // Create new game instance if it doesn't exist
+          const newGame: GameInstance = {
+            id: gameId,
+            createdAt: Date.now(),
+            states: [], // This would be populated from your GeoJSON data
+            players: [player],
+          };
+
+          // Save to database
+          const { error: insertError } = await supabase
+            .from("game_instances")
+            .insert(newGame);
+
+          if (insertError) {
+            throw new Error(`Failed to create game: ${insertError.message}`);
+          }
+
+          setGameInstance(newGame);
+        } else {
+          // Use existing game instance
+          const gameInstance: GameInstance = {
+            id: data.id,
+            createdAt: new Date(data.created_at).getTime(),
+            states: data.states || [],
+            players: [...(data.players || []), player],
+          };
+
+          setGameInstance(gameInstance);
+
+          // Update players in database
+          const { error: updateError } = await supabase
+            .from("game_instances")
+            .update({ players: gameInstance.players })
+            .eq("id", gameId);
+
+          if (updateError) {
+            console.error("Failed to update players:", updateError);
+          }
+        }
+
+        console.log(`Successfully joined game: ${gameId}`);
       } catch (error) {
         console.error("Error joining game:", error);
-        // Reset game state on error
-        setGameId(null);
-        setCurrentPlayer(null);
-
-        // Set error message
-        const errorMessage =
-          error instanceof Error ? error.message : "Failed to join game";
-        setConnectionError(`Failed to join game: ${errorMessage}`);
-
-        return Promise.reject(error);
+        setConnectionError(
+          error instanceof Error ? error.message : "Failed to join game",
+        );
       } finally {
         setIsJoining(false);
       }
@@ -336,56 +383,100 @@ export const GameRealtimeProvider: React.FC<GameRealtimeProviderProps> = ({
   );
 
   /**
-   * Leave the current game and clean up
+   * Leave the current game
    */
   const leaveGame = useCallback(() => {
     if (currentPlayer && gameId) {
       // Send leave message
-      sendMessage(MessageType.PLAYER_LEFT, {
-        type: MessageType.PLAYER_LEFT,
-        gameId,
-        playerId: currentPlayer.id,
-        player: currentPlayer,
-        timestamp: Date.now(),
-      });
+      sendMessage(MessageType.PLAYER_LEFT, { playerId: currentPlayer.id });
 
-      // Leave the channel
-      leaveChannel();
+      // Update database
+      supabase
+        .from("game_instances")
+        .select("players")
+        .eq("id", gameId)
+        .single()
+        .then(({ data, error }) => {
+          if (error || !data) {
+            console.error("Failed to fetch players:", error);
+            return;
+          }
 
-      // Reset state
-      setGameId(null);
-      setCurrentPlayer(null);
-      setGameInstance(null);
+          const updatedPlayers = (data.players || []).filter(
+            (p: Player) => p.id !== currentPlayer.id,
+          );
+
+          supabase
+            .from("game_instances")
+            .update({ players: updatedPlayers })
+            .eq("id", gameId)
+            .then(({ error: updateError }) => {
+              if (updateError) {
+                console.error("Failed to update players:", updateError);
+              }
+            });
+        });
     }
-  }, [currentPlayer, gameId, leaveChannel, sendMessage]);
+
+    // Leave the channel
+    leaveChannel();
+
+    // Reset state
+    setGameId(null);
+    setCurrentPlayer(null);
+    setGameInstance(null);
+    setOnlinePlayers([]);
+  }, [currentPlayer, gameId, sendMessage, leaveChannel]);
 
   /**
-   * Claim a state with the current player
+   * Claim a state
    */
   const claimState = useCallback(
     (stateId: string) => {
-      if (!currentPlayer || !gameId) {
-        setConnectionError("Cannot claim state: Not connected to a game");
+      if (!currentPlayer || !gameInstance) {
+        setConnectionError("You must join a game first");
         return;
       }
 
-      // Check if the player has enough resources
+      // Check if player has enough resources
       if (currentPlayer.resources < ACTION_COSTS.CLAIM_STATE) {
         setConnectionError(
-          `Not enough resources to claim state. Need ${ACTION_COSTS.CLAIM_STATE} resources.`,
+          `Not enough resources to claim state (need ${ACTION_COSTS.CLAIM_STATE})`,
         );
         return;
       }
 
-      sendMessage(MessageType.CLAIM_STATE, {
-        type: MessageType.CLAIM_STATE,
-        gameId,
-        playerId: currentPlayer.id,
+      // Check if state is neutral
+      const state = gameInstance.states.find((s) => s.stateId === stateId);
+      if (!state) {
+        setConnectionError("State not found");
+        return;
+      }
+
+      if (state.ownerId) {
+        setConnectionError("Cannot claim a state that is already owned");
+        return;
+      }
+
+      // Check if player owns an adjacent state
+      const adjacentStates = getAdjacentStates(stateId, gameInstance.states);
+      const ownsAdjacentState = adjacentStates.some(
+        (s) => s.ownerId === currentPlayer.id,
+      );
+
+      if (!ownsAdjacentState) {
+        setConnectionError("You must own an adjacent state to claim this one");
+        return;
+      }
+
+      // Send claim message
+      sendMessage(MessageType.STATE_CLAIMED, {
         stateId,
-        timestamp: Date.now(),
+        playerId: currentPlayer.id,
+        cost: ACTION_COSTS.CLAIM_STATE,
       });
 
-      // Optimistically update the player's resources
+      // Update local state
       setCurrentPlayer((prev) => {
         if (!prev) return prev;
         return {
@@ -393,39 +484,106 @@ export const GameRealtimeProvider: React.FC<GameRealtimeProviderProps> = ({
           resources: prev.resources - ACTION_COSTS.CLAIM_STATE,
         };
       });
+
+      setGameInstance((prev) => {
+        if (!prev) return prev;
+
+        const updatedStates = prev.states.map((s: StateOwnership) => {
+          if (s.stateId === stateId) {
+            return {
+              ...s,
+              ownerId: currentPlayer.id,
+              capturedAt: Date.now(),
+            };
+          }
+          return s;
+        });
+
+        return {
+          ...prev,
+          states: updatedStates,
+        };
+      });
     },
-    [currentPlayer, gameId, sendMessage],
+    [currentPlayer, gameInstance, sendMessage],
   );
 
   /**
-   * Attack a state with the current player
+   * Attack a state
    */
   const attackState = useCallback(
-    (stateId: string, extraResources: number) => {
-      if (!currentPlayer || !gameId) {
-        setConnectionError("Cannot attack state: Not connected to a game");
+    (stateId: string, extraResources: number = 0) => {
+      if (!currentPlayer || !gameInstance) {
+        setConnectionError("You must join a game first");
         return;
       }
 
-      // Check if the player has enough resources (base cost + extra)
       const totalCost = ACTION_COSTS.ATTACK_STATE_BASE + extraResources;
+
+      // Check if player has enough resources
       if (currentPlayer.resources < totalCost) {
         setConnectionError(
-          `Not enough resources for attack. Need ${totalCost} resources.`,
+          `Not enough resources to attack state (need ${totalCost})`,
         );
         return;
       }
 
-      sendMessage(MessageType.ATTACK_STATE, {
-        type: MessageType.ATTACK_STATE,
-        gameId,
-        playerId: currentPlayer.id,
+      // Check if state exists and is owned by someone else
+      const state = gameInstance.states.find((s) => s.stateId === stateId);
+      if (!state) {
+        setConnectionError("State not found");
+        return;
+      }
+
+      if (!state.ownerId) {
+        setConnectionError("Cannot attack a neutral state, claim it instead");
+        return;
+      }
+
+      if (state.ownerId === currentPlayer.id) {
+        setConnectionError("Cannot attack your own state");
+        return;
+      }
+
+      // Check if player owns an adjacent state
+      const adjacentStates = getAdjacentStates(stateId, gameInstance.states);
+      const ownsAdjacentState = adjacentStates.some(
+        (s) => s.ownerId === currentPlayer.id,
+      );
+
+      if (!ownsAdjacentState) {
+        setConnectionError("You must own an adjacent state to attack this one");
+        return;
+      }
+
+      // Calculate attack strength
+      const attackerAdjacentCount = adjacentStates.filter(
+        (s) => s.ownerId === currentPlayer.id,
+      ).length;
+
+      const attackStrength =
+        attackerAdjacentCount + Math.floor(extraResources / 5);
+
+      // Calculate defense strength
+      const defenderAdjacentCount = adjacentStates.filter(
+        (s) => s.ownerId === state.ownerId,
+      ).length;
+
+      // Determine if attack is successful
+      const isSuccessful = attackStrength > defenderAdjacentCount;
+
+      // Send attack message
+      sendMessage(MessageType.STATE_ATTACKED, {
         stateId,
-        extraResources,
-        timestamp: Date.now(),
+        playerId: currentPlayer.id,
+        targetPlayerId: state.ownerId,
+        cost: totalCost,
+        attackStrength,
+        defenseStrength: defenderAdjacentCount,
+        success: isSuccessful,
       });
 
-      // Optimistically update the player's resources
+      // Update local state
       setCurrentPlayer((prev) => {
         if (!prev) return prev;
         return {
@@ -433,32 +591,43 @@ export const GameRealtimeProvider: React.FC<GameRealtimeProviderProps> = ({
           resources: prev.resources - totalCost,
         };
       });
+
+      if (isSuccessful) {
+        setGameInstance((prev) => {
+          if (!prev) return prev;
+
+          const updatedStates = prev.states.map((s: StateOwnership) => {
+            if (s.stateId === stateId) {
+              return {
+                ...s,
+                ownerId: currentPlayer.id,
+                capturedAt: Date.now(),
+              };
+            }
+            return s;
+          });
+
+          return {
+            ...prev,
+            states: updatedStates,
+          };
+        });
+      }
     },
-    [currentPlayer, gameId, sendMessage],
+    [currentPlayer, gameInstance, sendMessage],
   );
 
-  /**
-   * Send a game message of any type
-   */
-  const sendGameMessage = useCallback(
-    (message: GameMessage) => {
-      // Cast the message to MessagePayload to satisfy the type constraint
-      sendMessage(message.type, message as unknown as Record<string, unknown>);
-    },
-    [sendMessage],
-  );
-
-  // Create the context value
+  // Context value
   const contextValue: GameRealtimeContextType = {
     isConnected,
     currentPlayer,
     gameInstance,
     onlinePlayers,
-    sendGameMessage,
-    joinGame,
-    leaveGame,
     claimState,
     attackState,
+    joinGame,
+    leaveGame,
+    connectionStatus,
     connectionError,
   };
 
@@ -470,15 +639,49 @@ export const GameRealtimeProvider: React.FC<GameRealtimeProviderProps> = ({
 };
 
 /**
- * Hook to access game realtime functionality
- * Must be used within a GameRealtimeProvider
+ * Custom hook to use the game realtime context
  */
-export const useGameRealtime = () => {
+export const useGameRealtimeContext = () => {
   const context = useContext(GameRealtimeContext);
   if (!context) {
     throw new Error(
-      "useGameRealtime must be used within a GameRealtimeProvider",
+      "useGameRealtimeContext must be used within a GameRealtimeProvider",
     );
   }
   return context;
 };
+
+/**
+ * Helper function to get a random color for a player
+ */
+function getRandomColor(): string {
+  const colors = [
+    "#FF5733", // Red-Orange
+    "#33FF57", // Green
+    "#3357FF", // Blue
+    "#FF33F5", // Pink
+    "#F5FF33", // Yellow
+    "#33FFF5", // Cyan
+    "#FF5733", // Orange
+    "#8C33FF", // Purple
+    "#FF338C", // Magenta
+    "#33FF8C", // Mint
+  ];
+
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
+/**
+ * Helper function to get adjacent states
+ */
+function getAdjacentStates(
+  stateId: string,
+  states: StateOwnership[],
+): StateOwnership[] {
+  const state = states.find((s) => s.stateId === stateId);
+  if (!state || !state.neighbors) {
+    return [];
+  }
+
+  return states.filter((s) => state.neighbors?.includes(s.stateId));
+}
