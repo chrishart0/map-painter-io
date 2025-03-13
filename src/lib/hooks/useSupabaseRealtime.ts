@@ -20,16 +20,21 @@ enum REALTIME_SUBSCRIBE_STATES {
   CHANNEL_ERROR = "CHANNEL_ERROR",
 }
 
+// Interface for presence payload
+interface PresencePayload {
+  player?: Player;
+  [key: string]: unknown;
+}
+
+// Message payload type
+type MessagePayload = Record<string, unknown>;
+
 interface UseSupabaseRealtimeOptions {
   channelName: string;
   eventTypes?: string[];
   onMessage?: (message: GameMessage) => void;
   onPresenceSync?: (state: RealtimePresenceState) => void;
   autoJoin?: boolean;
-}
-
-interface MessagePayload {
-  [key: string]: unknown;
 }
 
 interface QueuedMessage {
@@ -43,8 +48,8 @@ interface UseSupabaseRealtimeReturn {
   sendMessage: (eventType: string, message: MessagePayload) => void;
   joinChannel: () => Promise<void>;
   leaveChannel: () => void;
-  trackPresence: (presenceData: Partial<Player>) => void;
-  updatePresence: (presenceData: Partial<Player>) => void;
+  trackPresence: (presenceData: PresencePayload) => void;
+  updatePresence: (presenceData: PresencePayload) => void;
 }
 
 /**
@@ -268,7 +273,7 @@ export function useSupabaseRealtime({
    * Track user presence in the channel
    */
   const trackPresence = useCallback(
-    (presenceData: Partial<Player>) => {
+    (presenceData: PresencePayload) => {
       if (channelRef.current && isConnected) {
         console.log("Tracking presence:", presenceData);
         channelRef.current.track(presenceData);
@@ -283,7 +288,7 @@ export function useSupabaseRealtime({
    * Update presence data for the current user
    */
   const updatePresence = useCallback(
-    (presenceData: Partial<Player>) => {
+    (presenceData: PresencePayload) => {
       if (channelRef.current && isConnected) {
         console.log("Updating presence:", presenceData);
         channelRef.current.track(presenceData);

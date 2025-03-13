@@ -9,8 +9,8 @@ alwaysApply: false
 ## Overview
 
 Map Painter .io remains a real-time multiplayer .io game built with Next.js 15 and React 19, but with added flexibility:  
-- **Optional Authentication:** Leverage [Clerk](mdc:https:/clerk.dev) to provide user authentication, enabling users to log in and get a personalized username. If they opt out, the system will assign a default username while still tracking key metrics.
-- **Persistent Data Storage:** Use [Supabase](mdc:https:/supabase.com) to persist user data, game metrics, and analytics, complementing the existing Vercel KV layer for high-speed in-memory operations.
+- **Authentication:** Leverage [Clerk](mdc:https:/clerk.dev) to provide user authentication, enabling users to log in and get a personalized username. If they opt out, the system will assign a default username while still tracking key metrics.
+- **Persistent Data Storage:** Use [Supabase](mdc:https:/supabase.com) to persist user data, game metrics, and websocket
 
 ## Technology Stack
 
@@ -21,9 +21,10 @@ Map Painter .io remains a real-time multiplayer .io game built with Next.js 15 a
   - **Rendering:** PixiJS 8.x (with WebGPU support)
   - **State Management:** Redux Toolkit 2.x + RTK Query
   - **Component Library:** Shadcn/ui (Tailwind-based components)
+  - **Hosting:** Vercel
 - **Backend:**
-  - **WebSocket:** `ws` integrated with a custom Next.js server
-  - **Data Storage:** Vercel KV for in-memory speed (with **Supabase** for persistence)
+  - **WebSocket:** Supabase Realtime
+  - **Data Storage:** Supabase
 - **Authentication & Metrics:** **Clerk** for optional user authentication and tracking metrics
 - **Styling:** Tailwind CSS 3.4+
 - **Testing:**
@@ -38,6 +39,13 @@ Map Painter .io remains a real-time multiplayer .io game built with Next.js 15 a
 
 ```
 map-painter-io/
+├── components.json
+├── docs
+│   ├── Plan Overview.md
+│   └── Roadmap.md
+├── e2e
+│   ├── homepage.spec.ts
+│   └── navigation.spec.ts
 ├── src/
 │   ├── app/                  # Next.js app router and game routes
 │   ├── components/           # Reusable UI & game-specific components
@@ -50,7 +58,6 @@ map-painter-io/
 │   ├── types/               # Shared TypeScript types
 │   ├── public/              # Static assets (GeoJSON maps)
 │   └── tests/               # Unit and integration tests
-├── e2e/                     # Playwright end-to-end tests
 ├── .github/                 # CI/CD workflows (GitHub Actions)
 ├── .husky/                  # Pre-commit hooks configuration
 ├── Config files             # ESLint, Prettier, Next.js, Tailwind, Vitest, etc.

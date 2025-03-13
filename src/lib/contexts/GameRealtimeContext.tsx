@@ -301,7 +301,7 @@ export const GameRealtimeProvider: React.FC<GameRealtimeProviderProps> = ({
           );
 
           // Track player presence
-          trackPresence(player);
+          trackPresence({ player });
 
           // Send join message
           sendMessage(MessageType.PLAYER_JOINED, {

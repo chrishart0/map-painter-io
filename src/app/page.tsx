@@ -3,8 +3,8 @@
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { DirectGameComponent } from "@/components/DirectGameComponent";
 import { RealtimeTest } from "@/components/RealtimeTest";
-import { GameStatusSimple } from "@/components/GameStatusSimple";
-import { SimpleGameRealtimeProvider } from "@/lib/contexts/SimpleGameRealtimeContext";
+import { GameStatus } from "@/components/GameStatus";
+import { GameRealtimeProvider } from "@/lib/contexts/GameRealtimeContext";
 import { Card, CardContent } from "@/components/ui/card";
 
 export default function Home() {
@@ -23,9 +23,9 @@ export default function Home() {
 
       <div className="grid p-4 gap-4">
         <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-          <SimpleGameRealtimeProvider>
-            <GameStatusSimple />
-          </SimpleGameRealtimeProvider>
+          <GameRealtimeProvider>
+            <GameStatus />
+          </GameRealtimeProvider>
 
           <Card className="bg-card/80 backdrop-blur-sm border-border p-8 max-w-2xl">
             <CardContent className="p-0">

@@ -1,0 +1,9 @@
+---
+description: Manditory guidelines that should always be used when programming
+globs: *.tsx
+alwaysApply: false
+---
+
+
+- Always be strict with typing
+- Defined but unused vareiables are not allowed

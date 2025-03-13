@@ -280,11 +280,29 @@ describe("useSupabaseRealtime Hook", () => {
 
     // Call trackPresence now that we're connected
     act(() => {
-      result.current.trackPresence({ id: "player1", name: "Player 1" });
+      result.current.trackPresence({
+        player: {
+          id: "player1",
+          name: "Player 1",
+          color: "#FF5733",
+          resources: 10,
+          connectedAt: Date.now(),
+          lastActiveAt: Date.now(),
+        },
+      });
     });
 
     // Verify presence was tracked
-    expect(mockTrack).toHaveBeenCalledWith({ id: "player1", name: "Player 1" });
+    expect(mockTrack).toHaveBeenCalledWith({
+      player: {
+        id: "player1",
+        name: "Player 1",
+        color: "#FF5733",
+        resources: 10,
+        connectedAt: expect.any(Number),
+        lastActiveAt: expect.any(Number),
+      },
+    });
   });
 
   it("updates presence state on sync events", () => {
