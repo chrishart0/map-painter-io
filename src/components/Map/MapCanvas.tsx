@@ -33,12 +33,21 @@ import {
   drawState,
   isPointInState,
 } from "@/utils/mapRendering";
+import { Player } from "@/types/game";
 
 interface MapCanvasProps {
   /** Width of the canvas in pixels (default: 800) */
   width?: number;
   /** Height of the canvas in pixels (default: 600) */
   height?: number;
+  /** Optional player selections to display */
+  playerSelections?: Record<string, string[]>;
+  /** Optional list of players for color mapping */
+  players?: Player[];
+  /** Optional callback when selection changes */
+  onSelectionChange?: (selectedStates: string[]) => void;
+  /** Optional current player ID */
+  currentPlayerId?: string;
 }
 
 // Define a spatial index grid
@@ -49,6 +58,10 @@ interface SpatialGridCell {
 export default function MapCanvas({
   width = 800,
   height = 600,
+  playerSelections = {},
+  players = [],
+  onSelectionChange,
+  currentPlayerId,
 }: MapCanvasProps) {
   // References
   const containerRef = useRef<HTMLDivElement>(null);
@@ -68,6 +81,22 @@ export default function MapCanvas({
   const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
   const [showTooltip] = useState(true);
   const [focusedStateIndex, setFocusedStateIndex] = useState<number>(-1);
+
+  // Notify parent component when selection changes
+  useEffect(() => {
+    if (onSelectionChange && currentPlayerId) {
+      onSelectionChange(Array.from(selectedStates));
+    }
+  }, [selectedStates, onSelectionChange, currentPlayerId]);
+
+  // Get player color by ID
+  const getPlayerColor = useCallback(
+    (playerId: string): string => {
+      const player = players.find((p) => p.id === playerId);
+      return player?.color || "#888888"; // Default gray if player not found
+    },
+    [players],
+  );
 
   // Create a spatial index for faster hit testing and rendering
   const spatialIndex = useMemo(() => {
@@ -405,6 +434,20 @@ export default function MapCanvas({
       const isHovered =
         hoveredState === state.id || realIndex === focusedStateIndex;
 
+      // Check if any other player has selected this state
+      const otherPlayerSelections: { playerId: string; color: string }[] = [];
+
+      Object.entries(playerSelections).forEach(([playerId, stateIds]) => {
+        // Skip current player's selections as they're handled separately
+        if (playerId !== currentPlayerId && stateIds.includes(state.id)) {
+          otherPlayerSelections.push({
+            playerId,
+            color: getPlayerColor(playerId),
+          });
+        }
+      });
+
+      // Call drawState with the correct number of arguments
       drawState(
         ctx,
         state,
@@ -414,6 +457,8 @@ export default function MapCanvas({
         offsetX,
         offsetY,
         scale,
+        // Pass otherPlayerSelections as an optional parameter
+        otherPlayerSelections.length > 0 ? otherPlayerSelections : undefined,
       );
     });
   }, [
@@ -426,6 +471,9 @@ export default function MapCanvas({
     pan,
     focusedStateIndex,
     getVisibleStates,
+    playerSelections,
+    currentPlayerId,
+    getPlayerColor,
   ]);
 
   // Convert canvas coordinates to map coordinates (for mouse/touch events)
@@ -727,6 +775,8 @@ export default function MapCanvas({
         states={states}
         selectedStates={selectedStates}
         showTooltip={showTooltip}
+        playerSelections={playerSelections}
+        players={players}
       />
 
       {/* Invisible text for screen readers to announce focused state */}

@@ -1,4 +1,4 @@
-import MapWrapper from "@/components/Map/MapWrapper";
+import EnhancedMapWrapper from "@/components/Map/EnhancedMapWrapper";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -8,7 +8,8 @@ import GameResourceCounter from "@/components/GameResourceCounter";
 
 export const metadata = {
   title: "Map Painter.io - Interactive Map",
-  description: "Interactive map for Map Painter.io game",
+  description:
+    "Interactive map for Map Painter.io game with multiplayer state selection tracking",
 };
 
 /**
@@ -18,6 +19,12 @@ export const metadata = {
  * all connected through WebSockets via direct Supabase Realtime channels.
  * The layout features a header with navigation and theme controls,
  * and a main section with the map and chat panel side by side.
+ *
+ * Features:
+ * - Real-time multiplayer interaction
+ * - State selection tracking via WebSocket
+ * - Chat functionality
+ * - Resource management
  *
  * @returns {JSX.Element} The rendered MapPage component.
  */
@@ -78,7 +85,7 @@ export default function MapPage() {
         <GameResourceCounter />
         <div className="flex h-full">
           <div className="flex-1 p-4">
-            <MapWrapper width={1000} height={600} />
+            <EnhancedMapWrapper width={1000} height={600} />
           </div>
           <div className="w-1/3 p-4 border-l border-muted-foreground flex flex-col">
             <div className="mb-4">

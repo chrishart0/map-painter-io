@@ -39,6 +39,7 @@ export enum MessageType {
   LEAVE_GAME = "leave_game",
   CLAIM_STATE = "claim_state",
   ATTACK_STATE = "attack_state",
+  STATE_SELECTION = "state_selection",
 
   // Server -> Client messages
   GAME_STATE = "game_state",
@@ -128,6 +129,13 @@ export interface ErrorMessage extends WebSocketMessage {
   message: string;
 }
 
+// New interface for state selection updates
+export interface StateSelectionMessage extends WebSocketMessage {
+  type: MessageType.STATE_SELECTION;
+  playerId: string;
+  selectedStates: string[]; // Array of state IDs that the player has selected
+}
+
 // Union type for all WebSocket messages
 export type GameMessage =
   | JoinGameMessage
@@ -140,4 +148,5 @@ export type GameMessage =
   | StateClaimedMessage
   | StateAttackedMessage
   | ResourcesUpdatedMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | StateSelectionMessage;

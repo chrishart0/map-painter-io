@@ -15,7 +15,13 @@
  * This is the primary component for establishing WebSocket connections in the application.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useContext,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -27,6 +33,7 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 import { createClient, RealtimeChannel } from "@supabase/supabase-js";
+import { GameContext } from "@/lib/contexts/GameContext";
 
 // Define types for presence state
 /**
@@ -61,7 +68,16 @@ interface PlayerInfo {
 }
 
 export function GameJoinPanel() {
-  // Game state
+  // Game state from context
+  const {
+    gameId: contextGameId,
+    currentPlayer,
+    isJoined,
+    joinGame: contextJoinGame,
+    leaveGame: contextLeaveGame,
+  } = useContext(GameContext);
+
+  // Local state
   const [gameId, setGameId] = useState<string>("default-game");
   const [playerName, setPlayerName] = useState<string>("");
   const [connectionStatus, setConnectionStatus] =
@@ -215,6 +231,9 @@ export function GameJoinPanel() {
               online_at: new Date().toISOString(),
             });
             addLog("Presence tracked successfully");
+
+            // Update the game context
+            contextJoinGame(gameId, playerName);
           } catch (error) {
             addLog(
               `Error tracking presence: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -263,28 +282,37 @@ export function GameJoinPanel() {
    * @returns {Promise<void>}
    */
   const handleLeaveGame = async () => {
-    if (channelRef.current && isConnected) {
-      try {
+    try {
+      if (channelRef.current) {
         // Send leave message
         await channelRef.current.send({
           type: "broadcast",
           event: "message",
           payload: {
             sender: playerName,
-            text: `${playerName} has left the game!`,
+            text: `${playerName} has left the game.`,
           },
         });
-        addLog("Leave message sent successfully");
-      } catch (error) {
-        addLog(
-          `Error sending leave message: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-      }
-    }
 
-    cleanupChannel();
-    setIsConnected(false);
-    setConnectionStatus("Disconnected");
+        // Untrack presence
+        await channelRef.current.untrack();
+      }
+
+      // Clean up channel
+      cleanupChannel();
+
+      // Update state
+      setIsConnected(false);
+      setConnectionStatus("Disconnected");
+
+      // Update the game context
+      contextLeaveGame();
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      addLog(`Error leaving game: ${errorMessage}`);
+      setErrorMessage(`Failed to leave game: ${errorMessage}`);
+    }
   };
 
   // Make channel available globally for other components
@@ -317,7 +345,7 @@ export function GameJoinPanel() {
                 Playing as <span className="font-semibold">{playerName}</span>
               </p>
               <p className="text-sm">
-                Game: <span className="font-semibold">{gameId}</span>
+                Game: <span className="font-semibold">{contextGameId}</span>
               </p>
               <p className="text-sm">
                 Players online:{" "}
@@ -338,48 +366,106 @@ export function GameJoinPanel() {
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle>Join Game</CardTitle>
+        <CardTitle>Game Session</CardTitle>
         <CardDescription>
-          Enter a game ID to join or create a new game
+          Join a game session to play with others
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {errorMessage && (
-          <div className="mb-4 p-2 bg-red-500/20 text-red-600 rounded text-sm">
-            {errorMessage}
+        {!isJoined ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label
+                htmlFor="game-id"
+                className="text-sm font-medium text-foreground"
+              >
+                Game ID
+              </label>
+              <Input
+                id="game-id"
+                value={gameId}
+                onChange={(e) => setGameId(e.target.value)}
+                placeholder="Enter game ID"
+              />
+            </div>
+            <div className="space-y-2">
+              <label
+                htmlFor="player-name"
+                className="text-sm font-medium text-foreground"
+              >
+                Your Name
+              </label>
+              <Input
+                id="player-name"
+                value={playerName}
+                onChange={(e) => setPlayerName(e.target.value)}
+                placeholder="Enter your name"
+              />
+            </div>
+            {errorMessage && (
+              <div className="text-sm text-red-500">{errorMessage}</div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm text-muted-foreground">Game ID:</span>{" "}
+                <span className="font-medium">{contextGameId}</span>
+              </div>
+              <div>
+                <span className="text-sm text-muted-foreground">
+                  Playing as:
+                </span>{" "}
+                <span className="font-medium">{currentPlayer?.name}</span>
+              </div>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Status: {connectionStatus}
+            </div>
+            <div>
+              <h3 className="text-sm font-medium mb-2">Players Online</h3>
+              <div className="max-h-24 overflow-y-auto">
+                {players.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No other players online
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {players.map((player) => (
+                      <li
+                        key={player.user_id}
+                        className="text-sm flex items-center"
+                      >
+                        <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                        {player.name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
           </div>
         )}
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm font-medium">Game ID</label>
-            <Input
-              type="text"
-              value={gameId}
-              onChange={(e) => setGameId(e.target.value)}
-              placeholder="Enter game ID"
-              disabled={isConnecting}
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium">Player Name</label>
-            <Input
-              type="text"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              placeholder="Enter your name"
-              disabled={isConnecting}
-            />
-          </div>
-        </div>
       </CardContent>
       <CardFooter>
-        <Button
-          onClick={handleJoinGame}
-          disabled={!gameId || !playerName || isConnecting}
-          className="w-full"
-        >
-          {isConnecting ? "Connecting..." : "Join Game"}
-        </Button>
+        {!isJoined ? (
+          <Button
+            onClick={handleJoinGame}
+            disabled={isConnecting || !playerName}
+            className="w-full"
+          >
+            {isConnecting ? "Connecting..." : "Join Game"}
+          </Button>
+        ) : (
+          <Button
+            onClick={handleLeaveGame}
+            variant="outline"
+            className="w-full"
+          >
+            Leave Game
+          </Button>
+        )}
       </CardFooter>
     </Card>
   );

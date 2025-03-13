@@ -124,8 +124,11 @@ export function useSupabaseRealtime({
       channelRef.current = null;
     }
     setIsConnected(false);
-    updateConnectionStatus("DISCONNECTED");
-  }, [updateConnectionStatus]);
+    setConnectionStatus("DISCONNECTED");
+    if (onStatusChange) {
+      onStatusChange("DISCONNECTED");
+    }
+  }, [onStatusChange]);
 
   /**
    * Calculate reconnection delay with exponential backoff
@@ -350,19 +353,17 @@ export function useSupabaseRealtime({
     [isConnected],
   );
 
-  // Auto-join on mount if autoJoin is true
+  // New auto-join effect
   useEffect(() => {
     if (autoJoin) {
-      joinChannel().catch((error: unknown) => {
+      joinChannelRef.current().catch((error: unknown) => {
         console.error("Error during auto-join:", error);
       });
     }
-
-    // Clean up on unmount
     return () => {
       leaveChannel();
     };
-  }, [autoJoin, joinChannel, leaveChannel]);
+  }, [autoJoin, leaveChannel]);
 
   // Update channel name if it changes
   useEffect(() => {

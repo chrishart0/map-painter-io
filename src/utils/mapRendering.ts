@@ -94,6 +94,7 @@ export function drawState(
   offsetX: number,
   offsetY: number,
   scale: number,
+  otherPlayerSelections?: Array<{ playerId: string; color: string }>,
 ) {
   if (!state.polygons.length) {
     return;
@@ -137,6 +138,21 @@ export function drawState(
       ctx.fillStyle = "#10B981"; // Solid teal for selected
     } else if (isHovered) {
       ctx.fillStyle = "#3B82F6"; // Solid blue for hover
+    } else if (otherPlayerSelections && otherPlayerSelections.length > 0) {
+      // If multiple players selected this state, use a striped pattern
+      if (otherPlayerSelections.length > 1) {
+        // Create a striped pattern with the first player's color
+        const stripeColor = otherPlayerSelections[0].color;
+        ctx.fillStyle = "#2A3441"; // Base color
+        ctx.fill();
+
+        // Draw diagonal stripes
+        const pattern = createDiagonalPattern(stripeColor);
+        ctx.fillStyle = pattern;
+      } else {
+        // Just use the player's color with transparency
+        ctx.fillStyle = otherPlayerSelections[0].color + "40"; // 25% opacity
+      }
     } else {
       ctx.fillStyle = "#2A3441"; // Neutral dark blue-gray
     }
@@ -151,6 +167,10 @@ export function drawState(
     } else if (isHovered) {
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = "#60A5FA"; // Blue border
+    } else if (otherPlayerSelections && otherPlayerSelections.length > 0) {
+      ctx.lineWidth = 1.5;
+      // Use the first player's color for the border
+      ctx.strokeStyle = otherPlayerSelections[0].color;
     } else {
       ctx.lineWidth = 0.75;
       ctx.strokeStyle = "#4B5563"; // Subtle border for neutral states
@@ -158,4 +178,37 @@ export function drawState(
 
     ctx.stroke();
   });
+}
+
+// Helper function to create a diagonal striped pattern
+function createDiagonalPattern(color: string): CanvasPattern | string {
+  try {
+    // Create a small canvas for the pattern
+    const patternCanvas = document.createElement("canvas");
+    patternCanvas.width = 10;
+    patternCanvas.height = 10;
+    const patternCtx = patternCanvas.getContext("2d");
+
+    if (!patternCtx) {
+      return color + "40"; // Fallback to semi-transparent color
+    }
+
+    // Draw the pattern
+    patternCtx.fillStyle = "rgba(0, 0, 0, 0)"; // Transparent background
+    patternCtx.fillRect(0, 0, 10, 10);
+
+    patternCtx.strokeStyle = color;
+    patternCtx.lineWidth = 1;
+    patternCtx.beginPath();
+    patternCtx.moveTo(0, 10);
+    patternCtx.lineTo(10, 0);
+    patternCtx.stroke();
+
+    // Create and return the pattern
+    const pattern = patternCtx.createPattern(patternCanvas, "repeat");
+    return pattern || color + "40"; // Fallback if pattern creation fails
+  } catch (e) {
+    console.error("Error creating pattern:", e);
+    return color + "40"; // Fallback to semi-transparent color
+  }
 }

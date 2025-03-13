@@ -12,17 +12,19 @@
  * - Handles client-side only rendering of canvas elements
  * - Passes dimension props to the MapCanvas component
  * - Full-screen immersive map experience
+ * - Supports multiplayer state selection tracking via WebSocket
  *
  * @component
  * @example
  * <MapWrapper width={1000} height={600} />
  */
 
-import { Suspense } from "react";
+import { Suspense, useContext } from "react";
 import dynamic from "next/dynamic";
+import { GameContext } from "@/lib/contexts/GameContext";
 
 // Dynamically import client component with ssr: false
-const MapCanvas = dynamic(() => import("./MapCanvas"), {
+const MultiplayerMap = dynamic(() => import("./MultiplayerMap"), {
   ssr: false,
 });
 
@@ -37,6 +39,9 @@ export default function MapWrapper({
   width = 1000,
   height = 600,
 }: MapWrapperProps) {
+  // Get current game and player information from context
+  const { gameId, currentPlayer } = useContext(GameContext);
+
   return (
     <div className="w-full h-full relative">
       <Suspense
@@ -47,7 +52,20 @@ export default function MapWrapper({
           </div>
         }
       >
-        <MapCanvas width={width} height={height} />
+        {gameId && currentPlayer ? (
+          <MultiplayerMap
+            gameInstanceId={gameId}
+            currentPlayerId={currentPlayer.id}
+            width={width}
+            height={height}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <p className="text-lg text-muted-foreground">
+              Join a game to interact with the map
+            </p>
+          </div>
+        )}
       </Suspense>
     </div>
   );

@@ -7,19 +7,23 @@
  * This hook builds on top of the useSupabaseRealtime hook to provide game-specific functionality.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useContext } from "react";
 import {
   useSupabaseRealtime,
   MessagePayload,
 } from "../hooks/useSupabaseRealtime";
 import { supabase } from "../supabase";
 import { Player, StateOwnership, MessageType } from "@/types/game";
+import { GameContext } from "@/lib/contexts/GameContext";
 
 interface UseGameRealtimeOptions {
   gameInstanceId: string;
   onMapStateChange?: (mapStates: StateOwnership[]) => void;
   onPlayerChange?: (players: Player[]) => void;
   onError?: (error: Error) => void;
+  onPlayerSelectionsChange?: (
+    playerSelections: Record<string, string[]>,
+  ) => void;
 }
 
 interface UseGameRealtimeReturn {
@@ -30,6 +34,11 @@ interface UseGameRealtimeReturn {
   connectionStatus: string;
   error: Error | null;
   sendStateUpdate: (stateId: string, ownerId: string | null) => void;
+  sendStateSelectionUpdate: (
+    playerId: string,
+    selectedStates: string[],
+  ) => void;
+  playerSelections: Record<string, string[]>; // Map of player IDs to their selected states
 }
 
 /**
@@ -40,11 +49,18 @@ export function useGameRealtime({
   onMapStateChange,
   onPlayerChange,
   onError,
+  onPlayerSelectionsChange,
 }: UseGameRealtimeOptions): UseGameRealtimeReturn {
+  // Get current player from context
+  const { currentPlayer } = useContext(GameContext);
+
   const [mapStates, setMapStates] = useState<StateOwnership[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
+  const [playerSelections, setPlayerSelections] = useState<
+    Record<string, string[]>
+  >({});
 
   // Handle incoming messages
   const handleMessage = useCallback(
@@ -80,6 +96,21 @@ export function useGameRealtime({
           }
           break;
 
+        case MessageType.STATE_SELECTION:
+          if (payload.playerId && payload.selectedStates) {
+            // Update player's selected states
+            setPlayerSelections((prev) => {
+              const updated = {
+                ...prev,
+                [payload.playerId as string]:
+                  payload.selectedStates as string[],
+              };
+              onPlayerSelectionsChange?.(updated);
+              return updated;
+            });
+          }
+          break;
+
         case MessageType.PLAYER_JOINED:
           if (payload.player) {
             // Add new player
@@ -106,6 +137,14 @@ export function useGameRealtime({
               );
               onPlayerChange?.(updatedPlayers);
               return updatedPlayers;
+            });
+
+            // Remove player's selections
+            setPlayerSelections((prev) => {
+              const updated = { ...prev };
+              delete updated[payload.playerId as string];
+              onPlayerSelectionsChange?.(updated);
+              return updated;
             });
           }
           break;
@@ -135,7 +174,7 @@ export function useGameRealtime({
           break;
       }
     },
-    [onMapStateChange, onPlayerChange],
+    [onMapStateChange, onPlayerChange, onPlayerSelectionsChange],
   );
 
   // Handle errors
@@ -151,23 +190,24 @@ export function useGameRealtime({
   // Initialize Supabase Realtime
   const { isConnected, connectionStatus, sendMessage, leaveChannel } =
     useSupabaseRealtime({
-      channelName: `game-${gameInstanceId}`,
+      channelName: `game:${gameInstanceId}`,
       eventTypes: [
         MessageType.STATE_CLAIMED,
         MessageType.STATE_ATTACKED,
         MessageType.PLAYER_JOINED,
         MessageType.PLAYER_LEFT,
         MessageType.RESOURCES_UPDATED,
+        MessageType.STATE_SELECTION,
       ],
       onMessage: handleMessage,
       onError: handleError,
-      autoJoin: true,
+      autoJoin: !!gameInstanceId && gameInstanceId !== "default-game", // Only auto-join if we have a valid game ID
     });
 
   // Send a state update
   const sendStateUpdate = useCallback(
     (stateId: string, ownerId: string | null) => {
-      if (!isConnected) {
+      if (!isConnected || !gameInstanceId) {
         setError(new Error("Cannot update state: not connected"));
         return;
       }
@@ -183,13 +223,28 @@ export function useGameRealtime({
         console.warn("Resetting state to neutral is not implemented");
       }
     },
-    [isConnected, sendMessage],
+    [isConnected, sendMessage, gameInstanceId],
+  );
+
+  // Send a state selection update
+  const sendStateSelectionUpdate = useCallback(
+    (playerId: string, selectedStates: string[]) => {
+      if (!isConnected || !gameInstanceId) {
+        setError(new Error("Cannot update state selection: not connected"));
+        return;
+      }
+
+      sendMessage(MessageType.STATE_SELECTION, {
+        playerId,
+        selectedStates,
+      });
+    },
+    [isConnected, sendMessage, gameInstanceId],
   );
 
   // Fetch initial data
   useEffect(() => {
-    if (!gameInstanceId) {
-      setError(new Error("Game instance ID is required"));
+    if (!gameInstanceId || gameInstanceId === "default-game") {
       setIsLoading(false);
       return;
     }
@@ -238,6 +293,21 @@ export function useGameRealtime({
     };
   }, [gameInstanceId, leaveChannel, onMapStateChange, onPlayerChange]);
 
+  // Send current player's selections when they join
+  useEffect(() => {
+    if (
+      currentPlayer &&
+      isConnected &&
+      Object.keys(playerSelections).length === 0
+    ) {
+      // Initialize the current player's selections as empty
+      setPlayerSelections((prev) => ({
+        ...prev,
+        [currentPlayer.id]: [],
+      }));
+    }
+  }, [currentPlayer, isConnected, playerSelections]);
+
   return {
     mapStates,
     players,
@@ -246,5 +316,7 @@ export function useGameRealtime({
     connectionStatus,
     error,
     sendStateUpdate,
+    sendStateSelectionUpdate,
+    playerSelections,
   };
 }
